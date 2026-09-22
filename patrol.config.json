@@ -1,0 +1,32 @@
+{
+  "$comment": "이 파일 한 장만 고치면 우리 동에서 씁니다. 나머지 코드는 손대지 마세요.",
+  "dong": "○○동",
+  "unit": "환경순찰",
+  "roads": [],
+  "seasonalSpots": [],
+  "thresholds": {
+    "lane": 0.8,
+    "sameLocation": 0.5,
+    "addressPlate": 0.7,
+    "sameMinutes": 2,
+    "splitMinutes": 5
+  },
+  "vision": {
+    "model": "gpt-5.6-luna",
+    "baseUrl": "https://api.openai.com/v1",
+    "maxTokens": 4096,
+    "maxEdge": 1024,
+    "concurrency": 6
+  },
+  "firstPass": {
+    "enabled": true,
+    "model": "jev-latest",
+    "concurrency": 8
+  },
+  "manual": {
+    "groupSize": 3
+  },
+  "log": {
+    "mode": "local"
+  }
+}
