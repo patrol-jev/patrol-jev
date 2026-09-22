@@ -1,5 +1,5 @@
 /**
- * 갈래 — 순찰일지의 란이 곧 갈래다. 여기 없는 판단은 하지 않는다.
+ * 갈래. 순찰일지의 란이 곧 갈래다. 여기 없는 판단은 하지 않는다.
  *
  * 위험성 등급·폐기물 종류·평가항목·배점은 **일부러 없다.**
  * 그런 판단은 담당자가 한다. 도구가 늘어나면 쓰는 사람이 준다.
@@ -35,7 +35,7 @@ export const LANE_ORDER: Lane[] = [
  */
 export const REAL_LANES: Lane[] = ["waste_cleanup", "flood_season", "risk_facility"];
 
-/** 사람이 고를 수 있는 것 — 「모르겠음」도 고를 수 있어야 한다. */
+/** 사람이 고를 수 있는 것. 「모르겠음」도 고를 수 있어야 한다. */
 export const HUMAN_CHOICES: LaneOrUnknown[] = [
   "waste_cleanup",
   "flood_season",
@@ -59,7 +59,7 @@ export interface Thresholds {
   sameMinutes: number;
   /**
    * 앞 장과 몇 분 넘게 벌어지면 **무조건** 다른 자리로 보는가.
-   * 주소판보다 세다 — 같은 주소판 앞에서 찍혔어도 두 시간 벌어졌으면 거기서 한 일이 아니다.
+   * 주소판보다 세다. 같은 주소판 앞에서 찍혔어도 두 시간 벌어졌으면 거기서 한 일이 아니다.
    */
   splitMinutes: number;
 }

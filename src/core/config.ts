@@ -13,7 +13,7 @@ export interface PatrolConfig {
   unit: string;
   /**
    * 그 동에서 자주 나오는 도로명. 주소판 판독의 **참고**일 뿐 화이트리스트가 아니다.
-   * 비워 두어도 동작한다 — 읽은 대로 쓰는 것이 목록에 억지로 맞추는 것보다 낫다.
+   * 비워 두어도 동작한다. 읽은 대로 쓰는 것이 목록에 억지로 맞추는 것보다 낫다.
    */
   roads: string[];
   /** 그늘막·빗물받이처럼 위치가 고정된 지점. 사진에서 읽지 않고 이 목록을 쓴다. */
@@ -48,7 +48,7 @@ export interface PatrolConfig {
     concurrency: number;
   };
   /**
-   * 수동 모드 — 사진을 모델에 안 보내고 사람이 자리와 말을 적는 길.
+   * 수동 모드. 사진을 모델에 안 보내고 사람이 자리와 말을 적는 길.
    * 모델을 한 번도 안 부르므로 비용이 0 이고, 사진이 이 컴퓨터 밖으로 나가지 않는다.
    */
   manual: {
@@ -84,7 +84,7 @@ export const DEFAULT_CONFIG: PatrolConfig = {
 
 let cached: PatrolConfig | null = null;
 
-/** 서버에서만 부른다. 읽기 실패하면 기본값으로 돈다 — 설정 없이도 켜져야 한다. */
+/** 서버에서만 부른다. 읽기 실패하면 기본값으로 돈다. 설정 없이도 켜져야 한다. */
 export function loadConfig(): PatrolConfig {
   if (cached) return cached;
   try {
@@ -112,7 +112,7 @@ export function loadConfig(): PatrolConfig {
  *
  * 다만 한 기계에서 여러 일을 하는 사람은 이미 그 이름을 다른 일에 쓰고 있다. 모르고 그 키로
  * 돌면 비용이 섞여서 「이 도구가 얼마 썼나」를 나중에 못 가린다. 그래서 **이 레포 이름이 붙은
- * 쪽을 먼저 본다.** 그런 게 없으면 그때 원래 이름을 쓴다 — 새로 받은 사람에게는 이름 하나뿐이다.
+ * 쪽을 먼저 본다.** 그런 게 없으면 그때 원래 이름을 쓴다. 새로 받은 사람에게는 이름 하나뿐이다.
  */
 export function readKey(base: "OPENAI_API_KEY" | "TYPESAFE_API_KEY"): string | undefined {
   // OPEN_AI 는 이 도구보다 먼저 그 이름으로 키를 넣어 둔 기계를 위한 자리다.

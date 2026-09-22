@@ -8,7 +8,7 @@ import type { FirstPass, FirstPassInput, Judged } from "./types";
  * Jev 1차 판단기.
  *
  * 한 장에 한 번 부르고, 그 한 번에 네 질문을 같이 싣는다(서로 독립이라 병렬로 답이 온다).
- * 여러 장은 동시에 부른다 — 배치 호출은 API 에 없고, 대신 분당 요청 한도가 넉넉하다.
+ * 여러 장은 동시에 부른다. 배치 호출은 API 에 없고, 대신 분당 요청 한도가 넉넉하다.
  */
 export class JevFirstPass implements FirstPass {
   readonly name: string;
@@ -96,7 +96,7 @@ export class JevFirstPass implements FirstPass {
   }
 }
 
-/** 1차 판단을 끈 경우. 전부 「모르겠음」으로 두고 사람이 정한다 — 앱은 그대로 돈다. */
+/** 1차 판단을 끈 경우. 전부 「모르겠음」으로 두고 사람이 정한다. 앱은 그대로 돈다. */
 export class NoFirstPass implements FirstPass {
   readonly name = "off";
 

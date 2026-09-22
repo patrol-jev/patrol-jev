@@ -6,7 +6,7 @@ import type { UsageRecord } from "@/core/types";
  * 사용 로그.
  *
  * **아무 데도 보내지 않는다.** 이 브라우저의 localStorage 에만 쌓인다.
- * 공개 레포라 이 문장이 코드와 어긋나면 안 된다 — 보내는 코드는 여기에 없다.
+ * 공개 레포라 이 문장이 코드와 어긋나면 안 된다. 보내는 코드는 여기에 없다.
  *
  * 남기는 것: 몇 장, 몇 묶음, 몇 초, 몇 번 고쳤나, 복사했나.
  * 남기지 않는 것: 사진, 주소, 사람, 동 이름, 기기 정보.
@@ -39,7 +39,7 @@ export function appendRun(record: UsageRecord, mode: "local" | "off"): void {
 
 /**
  * 도입 전 기준선. 첫 실행 때 한 번만 묻는다.
- * 이게 없으면 나중에 「얼마나 줄었나」를 말할 수 없다 — 그래서 묻되, 건너뛸 수 있게 둔다.
+ * 이게 없으면 나중에 「얼마나 줄었나」를 말할 수 없다. 그래서 묻되, 건너뛸 수 있게 둔다.
  */
 export function readBaseline(): number | null {
   try {
@@ -70,7 +70,7 @@ export function writeBaseline(minutes: number | null): void {
 
 /**
  * 담당자가 고른 동. 주소를 그 동의 도로명으로 대조할 때 쓴다.
- * 이 브라우저에만 남는다 — 한 번 고르면 다음에도 그대로다.
+ * 이 브라우저에만 남는다. 한 번 고르면 다음에도 그대로다.
  */
 export function readDong(): string | null {
   try {
@@ -324,7 +324,7 @@ export function learnWork(address: string, phrase: string, lane?: string): void 
     if (said.length > 0) {
       works.phrases = [said, ...works.phrases.filter((one) => one !== said)].slice(0, 30);
       // 어느 란에서 쓴 말인지도 같이 적어 둔다. 다음에 그 말을 고르면 란이 따라온다.
-      // 「모르겠음」은 적지 않는다 — 모른다는 것은 배울 것이 없다는 뜻이다.
+      // 「모르겠음」은 적지 않는다. 모른다는 것은 배울 것이 없다는 뜻이다.
       if (lane && lane !== "unknown") works.lanes[said] = lane;
     }
     localStorage.setItem(WORKS, JSON.stringify(works));

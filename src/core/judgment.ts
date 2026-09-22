@@ -6,7 +6,7 @@ import { choice, noul } from "@typesafe-ai/sdk";
  * 사람이 검토할 것은 코드가 아니라 **질문의 문장과 문턱값**이다. 그래서 흩어 두지 않았다.
  * 고칠 일이 생기면 여기만 고치면 된다.
  *
- * 질문을 영어로 쓴 까닭 — Jev 문서가 「English is the primary training language and where
+ * 질문을 영어로 쓴 까닭. Jev 문서가 「English is the primary training language and where
  * accuracy is currently best」라고 적고 있다. 그래서 **모델에게 묻는 말은 영어**로 두고,
  * 화면과 일지에 나가는 **사람의 말은 한국어**로 둔다. 사진에서 읽은 한글 글자는
  * 번역하지 않고 원문 그대로 state 에 넣는다(주소는 옮기는 순간 틀린다).
@@ -28,14 +28,14 @@ export type PhotoState = {
   previous_photo: {
     index: number;
     caption: string;
-    /** 앞 장과의 분 차이. 모르면 null — 모른다는 것을 모른다고 적는다. */
+    /** 앞 장과의 분 차이. 모르면 null. 모른다는 것을 모른다고 적는다. */
     minutes_before: number | null;
   } | null;
 };
 
 /**
  * 한 번의 요청에 이 질문들을 같이 보낸다.
- * 서로 독립이라 **병렬로 답이 오고, 서로의 답을 보지 못한다** — 그게 이 모델의 쓰임새다.
+ * 서로 독립이라 **병렬로 답이 오고, 서로의 답을 보지 못한다**. 그게 이 모델의 쓰임새다.
  */
 export const BASE_QUESTIONS = {
   lane: choice(
@@ -82,7 +82,7 @@ export const BASE_QUESTIONS = {
 
 /**
  * 묶기(청킹)를 사람의 눈 대신 여기서 판단한다.
- * 첫 장에는 앞 장이 없으니 **묻지 않는다** — 답할 수 없는 질문을 보내면 답이 지어내진다.
+ * 첫 장에는 앞 장이 없으니 **묻지 않는다**. 답할 수 없는 질문을 보내면 답이 지어내진다.
  */
 export const SAME_LOCATION_QUESTION = noul(
   "Were `photo` and `previous_photo` taken at the same spot — the same street, alley or building frontage — rather than at a different spot further along the route? Weigh `previous_photo.minutes_before`, the gap between the two shots, together with the scene itself.",
@@ -94,7 +94,7 @@ export const SAME_LOCATION_QUESTION = noul(
 );
 
 /**
- * 생성 모델에게 주는 지시. 판단을 시키지 않는다 — **본 것만 적게 한다.**
+ * 생성 모델에게 주는 지시. 판단을 시키지 않는다. **본 것만 적게 한다.**
  * 분류는 Jev 가 하고, 문장은 코드가 만든다. 이 모델의 몫은 「사진 → 글」뿐이다.
  */
 export const VISION_SYSTEM = `You convert one street-patrol photo into plain facts. You do not classify, judge, guess or advise.
@@ -108,7 +108,7 @@ caption_ko — the same one or two sentences in Korean, for the person who took 
 
 text_in_photo — every legible character you can read anywhere in the frame, copied verbatim in its original script. Do not translate, transliterate, correct or normalise. null if nothing is legible.
 
-sign_text — the text of a Korean road-name address plate if and only if one is in the frame: a blue pentagonal or rectangular sign carrying a road name above and a building number below. Copy the Korean exactly as printed, road name then building number, e.g. "○○로12길 34". Rules:
+sign_text. the text of a Korean road-name address plate if and only if one is in the frame: a blue pentagonal or rectangular sign carrying a road name above and a building number below. Copy the Korean exactly as printed, road name then building number, e.g. "○○로12길 34". Rules:
 - Read the Korean line. Any romanised line underneath is only a cross-check; if they disagree, trust the Korean.
 - Copy digits exactly. A three-digit building number stays three digits; do not split it into a road-number and a smaller number.
 - If the road name is too small to read but the building number is legible, give the building number alone.

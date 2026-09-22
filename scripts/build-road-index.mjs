@@ -41,7 +41,7 @@ const byDong = new Map();
 let rows = 0;
 
 for (const path of files) {
-  console.log(`읽는 중 — ${path}`);
+  console.log(`읽는 중: ${path}`);
   await eachLine(path, (line) => {
     const cells = line.split("|");
     if (cells.length < 17) return;

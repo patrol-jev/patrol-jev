@@ -2,7 +2,7 @@
  * 판정 회귀 검사.
  *
  * `src/core/judgment.ts` 의 질문을 고쳤으면 이걸 돌리세요. 사진 없이 **글만** 넣어
- * 갈래가 제자리로 가는지 봅니다. 실제 사진은 여기 들어가지 않습니다 — 지명도 없습니다.
+ * 갈래가 제자리로 가는지 봅니다. 실제 사진은 여기 들어가지 않습니다. 지명도 없습니다.
  *
  *   npm run dev
  *   node scripts/check-judgment.mjs
@@ -18,14 +18,14 @@ const THRESHOLD = { lane: 0.55, addressPlate: 0.7 };
 
 const CASES = [
   {
-    name: "골목 폐기물 — 치우기 전",
+    name: "골목 폐기물 (치우기 전)",
     caption:
       "A narrow alley between low buildings. Several bags of household refuse and loose litter are piled against a wall. A dustpan and broom lean beside them.",
     signText: null,
     lane: "waste_cleanup",
   },
   {
-    name: "골목 폐기물 — 치운 뒤",
+    name: "골목 폐기물 (치운 뒤)",
     caption:
       "The same narrow alley, now empty and swept. The road surface is clear and no refuse remains against the wall.",
     signText: null,
@@ -67,7 +67,7 @@ const CASES = [
     lane: "risk_facility",
   },
   {
-    name: "주소판만 찍힌 장 — 갈래는 비워야 한다",
+    name: "주소판만 찍힌 장: 갈래는 비워야 한다",
     caption:
       "A close view of a blue pentagonal street sign fixed to a wall, printed with a road name above and a building number below.",
     signText: "○○로12길 34",
@@ -75,7 +75,7 @@ const CASES = [
     addressPlate: "above",
   },
   {
-    name: "간판을 주소로 읽은 경우 — 걸러내야 한다",
+    name: "간판을 주소로 읽은 경우: 걸러내야 한다",
     caption:
       "A close view of a red and white shop signboard above a doorway, with a business name and a phone number.",
     signText: "행복식당 010-0000-0000",
@@ -110,7 +110,7 @@ for (const [i, testCase] of CASES.entries()) {
 
   if (!response.ok) {
     const body = await response.text();
-    console.error(`요청 실패 (${response.status}) — ${body}`);
+    console.error(`요청 실패 (${response.status}): ${body}`);
     console.error("개발 서버가 떠 있고 TYPESAFE_API_KEY 가 잡혀 있는지 보세요.");
     process.exit(1);
   }

@@ -2,7 +2,7 @@
  * 검사 스크립트가 `src/core` 의 TypeScript 를 **그대로** 읽게 해 주는 조각.
  *
  * 노드는 `./lanes` 처럼 확장자 없는 경로를 못 찾는다. 여기서 `.ts` 를 붙여 준다.
- * 그래서 검사 스크립트는 빌드도, 번들러도, 따로 깐 도구도 없이 돈다 — 그리고 검사가
+ * 그래서 검사 스크립트는 빌드도, 번들러도, 따로 깐 도구도 없이 돈다. 그리고 검사가
  * **앱과 똑같은 코드**를 부른다. 검사용으로 베껴 둔 사본은 언젠가 반드시 갈라진다.
  *
  *   node --experimental-strip-types --import ./scripts/ts-hooks.mjs scripts/check-report.mjs

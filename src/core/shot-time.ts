@@ -2,7 +2,7 @@
  * 찍힌 시각 되찾기.
  *
  * 순찰 사진은 대개 카메라가 날짜·시각을 **화면에 찍어 준다**(「2026년 5월 12일 오전 6:28」).
- * 그 글자는 앞 단계가 이미 `text_in_photo` 에 옮겨 적어 두었다. 그러니 다시 묻지 않는다 —
+ * 그 글자는 앞 단계가 이미 `text_in_photo` 에 옮겨 적어 두었다. 그러니 다시 묻지 않는다.
  * **코드가 읽는다.** 모델에게 「몇 시니」라고 묻는 것은 읽을 수 있는 것을 짐작시키는 일이다.
  *
  * 쓰는 자리 둘:
@@ -20,7 +20,7 @@ export interface ShotStamp {
 }
 
 /**
- * 사진에서 읽은 글자에서 촬영시각을 찾는다. 못 찾으면 null — **지어내지 않는다.**
+ * 사진에서 읽은 글자에서 촬영시각을 찾는다. 못 찾으면 null. **지어내지 않는다.**
  *
  * 받아들이는 꼴:
  *   2026년 5월 12일 오전 6:28   (국산 카메라 앱 기본)
@@ -67,7 +67,7 @@ export function minutesBetween(earlier: ShotStamp | null, later: ShotStamp | nul
  * 그 회차의 날짜. 일지 머리글에 찍히는 값이다.
  *
  * **가장 많이 나온 날짜로 정한다.** 「날짜가 있는 첫 장」으로 정하면 한 장만 잘못 읽혀도
- * 일지 전체의 날짜가 틀어진다. 같은 수면 이른 날짜로 — 순찰은 앞 날짜에서 시작한다.
+ * 일지 전체의 날짜가 틀어진다. 같은 수면 이른 날짜로. 순찰은 앞 날짜에서 시작한다.
  * 아무 장에서도 못 읽으면 빈 문자열(부르는 쪽이 오늘 날짜로 채운다).
  */
 export function commonDate(dates: (string | null | undefined)[]): string {
@@ -91,7 +91,7 @@ export function commonDate(dates: (string | null | undefined)[]): string {
  * 올라온 차례가 찍힌 차례와 거꾸로인 대목이 몇 군데인가.
  *
  * 묶기 규칙 전체가 「찍은 차례 = 순찰 동선」에 기대고 있다. 그 전제가 깨졌으면 **말해 줘야 한다.**
- * 차례를 몰래 바꾸지는 않는다 — 시각을 못 읽은 장이 섞여 있으면 어디에 끼울지 알 수 없고,
+ * 차례를 몰래 바꾸지는 않는다. 시각을 못 읽은 장이 섞여 있으면 어디에 끼울지 알 수 없고,
  * 조용히 바꾼 차례는 사람이 확인할 수 없다.
  */
 export function countBackwards(stamps: (ShotStamp | null)[]): number {
@@ -118,10 +118,10 @@ function readDate(text: string): string {
 }
 
 function readClock(text: string): { hour: number; minute: number } | null {
-  // 꼴을 차례로 대 본다. 앞 꼴이 걸렸는데 값이 말이 안 되면 **다음 꼴로 넘어간다** —
+  // 꼴을 차례로 대 본다. 앞 꼴이 걸렸는데 값이 말이 안 되면 **다음 꼴로 넘어간다**.
   // 거기서 멈추면 읽을 수 있는 시각을 버리게 된다.
 
-  // 오전/오후는 시각 **앞**에 온다 — 국산 카메라 앱의 꼴이다.
+  // 오전/오후는 시각 **앞**에 온다. 국산 카메라 앱의 꼴이다.
   const korean = /(오전|오후)\s*(\d{1,2})\s*:\s*(\d{2})/.exec(text);
   const fromKorean = korean
     ? meridiem(korean[1] === "오후", Number(korean[2]), Number(korean[3]))
@@ -142,7 +142,7 @@ function readClock(text: string): { hour: number; minute: number } | null {
 }
 
 /**
- * 12시가 함정이다 — 오전 12:05 는 0시 5분, 오후 12:05 는 12시 5분이다.
+ * 12시가 함정이다. 오전 12:05 는 0시 5분, 오후 12:05 는 12시 5분이다.
  * 「오전 0:10」 처럼 0 시로 적는 앱도 있어 0 도 받는다(자정 넘긴 순찰).
  */
 function meridiem(

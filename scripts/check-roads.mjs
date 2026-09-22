@@ -1,7 +1,7 @@
 /**
  * 주소 대조 회귀 검사.
  *
- * **API 도 색인 파일도 필요 없습니다.** 여기서 쓰는 도로명은 전부 지어낸 것입니다 —
+ * **API 도 색인 파일도 필요 없습니다.** 여기서 쓰는 도로명은 전부 지어낸 것입니다.
  * 공개 레포에 실제 지명을 남기지 않으려고 그렇게 했습니다.
  *
  *   npm run check:roads      (노드 22 이상)
@@ -33,7 +33,7 @@ let checked = 0;
 function check(name, got, want) {
   checked++;
   if (got === want) console.log(`OK   ${name}\n      ${got}`);
-  else problems.push(`${name} — 「${want}」 이어야 하는데 「${got}」`);
+  else problems.push(`${name}: 「${want}」 이어야 하는데 「${got}」`);
 }
 
 // ── 있는 도로명은 손대지 않는다.
@@ -53,7 +53,7 @@ check("번호가 동점을 깬다", readAddress("가나로나길 22", INDEX).tex
   const got = readAddress("가나로나길 99", INDEX);
   check("갈리면 고르지 않는다", got.text, "가나로나길 99");
   checked++;
-  if (got.correction !== null) problems.push("갈리면 고르지 않는다 — 고쳤다고 적혀 있다");
+  if (got.correction !== null) problems.push("갈리면 고르지 않는다. 고쳤다고 적혀 있다");
   else console.log("OK   고치지 않았음을 그대로 적는다");
 }
 
@@ -71,7 +71,7 @@ check("간판은 주소가 아니다", readAddress("행복식당 010-0000-0000",
 {
   checked++;
   const got = readAddress("행복식당 010-0000-0000", INDEX);
-  if (got.road !== null) problems.push("간판은 주소가 아니다 — 도로명을 짚었다");
+  if (got.road !== null) problems.push("간판은 주소가 아니다. 도로명을 짚었다");
   else console.log("OK   간판에서는 도로명을 짚지 않는다");
 }
 

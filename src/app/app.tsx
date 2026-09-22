@@ -121,12 +121,12 @@ export default function PatrolApp({
   const pass = useRef<string | null>(null);
 
   /**
-   * 사진 읽기를 지금 쓸 수 있나 — 키가 있고 오늘 몫이 남아 있어야 한다.
+   * 사진 읽기를 지금 쓸 수 있나. 키가 있고 오늘 몫이 남아 있어야 한다.
    * 이 값을 상태로 복사해 두지 않는다. 두 벌이 되면 반드시 어긋난다.
    */
   const canRead = ready.vision && !(quota.limit > 0 && quota.left === 0);
   /**
-   * 지금 들어가는 길. 고르는 칸을 따로 두지 않는다 —
+   * 지금 들어가는 길. 고르는 칸을 따로 두지 않는다.
    * 사진을 읽을 수 있으면 읽고, 키가 없거나 오늘 몫을 다 썼으면 직접 적는다.
    */
   const mode: Mode = canRead ? "auto" : "manual";
@@ -197,7 +197,7 @@ export default function PatrolApp({
    * 수동 모드에서 고를 수 있는 말과 그 란.
    *
    * 기본 셋(란마다 하나)이 먼저 오고, 그 뒤에 지금까지 써 본 말이 붙는다.
-   * **말을 고르면 란이 따라온다** — 그래야 사람이 채울 칸이 자리와 말 둘로 끝난다.
+   * **말을 고르면 란이 따라온다**. 그래야 사람이 채울 칸이 자리와 말 둘로 끝난다.
    */
   const manualPhrases: Phrase[] = useMemo(() => {
     void logVersion;
@@ -271,11 +271,11 @@ export default function PatrolApp({
   }, [phase, wall.gen, wall.jev]);
 
   /**
-   * 수동 모드 — **모델을 한 번도 부르지 않는다.**
+   * 수동 모드. **모델을 한 번도 부르지 않는다.**
    *
    * 사진은 브라우저에서 줄이기만 하고 서버로 보내지 않는다(base64 도 안 만든다).
    * 코드가 사진에서 가져오는 것은 EXIF 시각 하나뿐이고, 그걸로 자리를 묶는다.
-   * 주소와 말은 사람이 적는다 — 묶기·시각·문장·학습은 자동 모드와 똑같은 코드가 한다.
+   * 주소와 말은 사람이 적는다. 묶기·시각·문장·학습은 자동 모드와 똑같은 코드가 한다.
    */
   const runManual = useCallback(
     async (files: File[]) => {
@@ -322,7 +322,7 @@ export default function PatrolApp({
       );
 
       setGroupedBy(by);
-      // 이미 적어 둔 자리는 건드리지 않는다. 새로 넣은 사진만 뒤에 붙인다 —
+      // 이미 적어 둔 자리는 건드리지 않는다. 새로 넣은 사진만 뒤에 붙인다.
       // 통째로 다시 묶으면 사람이 친 주소가 날아간다.
       setGroups((current) => [...current, ...made]);
       setPhase("done");
@@ -346,7 +346,7 @@ export default function PatrolApp({
           await runManual(files);
           addNotice(
             `맛보기는 하루 ${quota.limit}장까지라 오늘은 다 읽었습니다. ` +
-              "사진 읽기만 빼고 직접 적는 길로 이어 갑니다 — 묶기와 일지 글은 그대로 나옵니다. " +
+              "사진 읽기만 빼고 직접 적는 길로 이어 갑니다. 묶기와 일지 글은 그대로 나옵니다. " +
               "받아서 본인 키로 쓰시면 장수 제한이 없습니다.",
           );
           return;
@@ -415,7 +415,7 @@ export default function PatrolApp({
       setPhase("judge");
       const jevStarted = performance.now();
       const everything = { ...described, ...fresh };
-      // 찍힌 시각은 EXIF 가 먼저다. 없으면 사진에 찍힌 워터마크를 코드가 읽는다 —
+      // 찍힌 시각은 EXIF 가 먼저다. 없으면 사진에 찍힌 워터마크를 코드가 읽는다.
       // 메신저로 오간 사진은 EXIF 가 벗겨져 오고, 그럴 때 시각은 화면 글자에만 남는다.
       const stamps: Record<number, ShotStamp | null> = {};
       for (const photo of all) {
@@ -481,7 +481,7 @@ export default function PatrolApp({
       const jevMs = performance.now() - jevStarted;
 
       // ── (C) 묶기. 여기부터는 모델이 아니라 코드다.
-      // 지난번에 사람이 정해 준 자리는 그대로 따른다. 갈래가 안 선 자리에만 얹는다 —
+      // 지난번에 사람이 정해 준 자리는 그대로 따른다. 갈래가 안 선 자리에만 얹는다.
       // 기계가 분명히 본 것을 옛 기억으로 덮지는 않는다.
       const learned = readLearned();
       const works = readWorks();
@@ -798,7 +798,7 @@ export default function PatrolApp({
                   onAddress={(address) =>
                     touch(group.id, (g) => {
                       const next = { ...g, address };
-                      // 지난번에 이 자리에 적어 둔 말이 있으면 얹는다. **비어 있을 때만** —
+                      // 지난번에 이 자리에 적어 둔 말이 있으면 얹는다. **비어 있을 때만**.
                       // 사람이 방금 친 말을 옛 기억으로 덮지 않는다.
                       if (!g.work?.trim() && address.replace(/s+/g, "").length >= 6) {
                         const remembered = recallWork(address, readWorks());
@@ -1236,7 +1236,7 @@ async function pool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>
  * 청소이고 일지에 적는 란도 순찰사항이다. 그건 사진에 안 보이는 사정이라 기계가 알 수 없다.
  * 한 번 고쳐 놓고 다음 회차에 또 고쳐야 한다면 배웠다고 할 수 없다.
  *
- * 대신 **덮었다는 것을 숨기지 않는다** — 카드에 「지난번 고친 대로」와 기계가 본 갈래를
+ * 대신 **덮었다는 것을 숨기지 않는다**. 카드에 「지난번 고친 대로」와 기계가 본 갈래를
  * 같이 적는다. 그 자리에 정말 다른 일이 생긴 날에는 사람이 도로 고치면 되고, 그러면
  * 기억도 그 값으로 바뀐다.
  */
@@ -1261,9 +1261,9 @@ function applyLearned(
 }
 
 /**
- * 사진 칸의 표식. 글자 없이 이것 하나만 둔다 — 무엇을 하는 칸인지 한눈에 보인다.
+ * 사진 칸의 표식. 글자 없이 이것 하나만 둔다. 무엇을 하는 칸인지 한눈에 보인다.
  *
- * 굵은 테두리에 주황 몸통. 도구의 표식이라 **Jev 무지개와는 색이 다르다** — 무지개는
+ * 굵은 테두리에 주황 몸통. 도구의 표식이라 **Jev 무지개와는 색이 다르다**. 무지개는
  * 「Jev 가 낸 값」에만 쓰는 표시라, 표식이 그 자리를 빌려 쓰면 규칙이 흐려진다.
  * 테두리는 글자색을 따라가 밝은 화면에서도 어두운 화면에서도 읽힌다.
  */
@@ -1278,7 +1278,7 @@ function CameraMark() {
       aria-label="사진"
       style={{ color: "var(--ink)" }}
     >
-      {/* 몸통 — 각진 상자가 아니라 둥글고 도톰하게. */}
+      {/* 몸통. 각진 상자가 아니라 둥글고 도톰하게. */}
       <path
         d="M10 20c0-3.3 2.7-6 6-6h3.2c1.1 0 2.1-.6 2.6-1.5l1-1.8c.5-.9 1.5-1.5 2.6-1.5h5.2c1.1 0 2.1.6 2.6 1.5l1 1.8c.5.9 1.5 1.5 2.6 1.5H40c3.3 0 6 2.7 6 6v15c0 3.3-2.7 6-6 6H16c-3.3 0-6-2.7-6-6V20Z"
         fill="#F9871F"
@@ -1313,15 +1313,15 @@ function defaultWorkOf(lane: LaneOrUnknown, say: Wording): string {
 }
 
 /**
- * 아이폰 사진을 펴는 데 도구를 한 번 받는다. 몇 초 멈춰 있으면 사람은 고장인 줄 안다.
+ * 아이폰 사진을 바꾸는 데 도구를 한 번 받는다. 몇 초 멈춰 있으면 사람은 고장인 줄 안다.
  * 무슨 일이 일어나는지 먼저 말해 둔다.
  */
 const HEIC_NOTE =
-  "아이폰 사진(HEIC)이 있어 브라우저에서 펴서 씁니다. 펴는 도구를 처음 한 번 내려받느라 " +
+  "아이폰 사진(HEIC)이 있어 브라우저에서 변환해 씁니다. 변환 도구를 처음 한 번 내려받느라 " +
   "잠깐 걸립니다. 원본은 나가지 않습니다.";
 
 /**
- * 못 연 사진을 사람 말로. **이름을 적는다** — 「2장 실패」만으로는 어느 것인지 알 수 없어
+ * 못 연 사진을 사람 말로. **이름을 적는다**. 「2장 실패」만으로는 어느 것인지 알 수 없어
  * 다시 올려 볼 수도, 빼고 갈 수도 없다.
  */
 function failedNote(failed: FailedPhoto[]): string {

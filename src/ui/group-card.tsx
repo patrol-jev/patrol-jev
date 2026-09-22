@@ -12,7 +12,7 @@ import { ChoiceBar, Chip, Ms, NoulRow } from "./jev";
 /**
  * 한 자리(묶음) 한 칸.
  *
- * 무지개빛은 Jev 가 낸 값에만 붙는다. 사람이 손대면 그 자리는 회색이 된다 —
+ * 무지개빛은 Jev 가 낸 값에만 붙는다. 사람이 손대면 그 자리는 회색이 된다.
  * 무엇을 기계가 정했고 무엇을 사람이 정했는지 나중에 봐도 구분되게.
  */
 export function GroupCard({
@@ -52,7 +52,7 @@ export function GroupCard({
   const byIndex = new Map(Object.values(judged).map((j) => [j.index, j]));
   // 막대는 이 묶음의 갈래를 정한 그 한 장의 분포다. 평균이 아니라 실제로 정한 값이다.
   const deciding = decidingJudgment(group.photos, byIndex, thresholds);
-  // 기계 혼자였으면 무엇으로 봤을지. 사람이 고쳐 둔 자리에서 그 값을 나란히 보인다 —
+  // 기계 혼자였으면 무엇으로 봤을지. 사람이 고쳐 둔 자리에서 그 값을 나란히 보인다.
   // 덮었다는 것을 숨기면 그 자리에 정말 다른 일이 생긴 날 사람이 알아채지 못한다.
   const machineLane = decideLane(group.photos, byIndex, thresholds);
   const probabilities = deciding?.laneProbabilities ?? null;

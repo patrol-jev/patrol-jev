@@ -4,7 +4,7 @@ import type { FirstPass, FirstPassInput } from "@/core/types";
 
 /**
  * 글 → 판정. 한 장에 한 번 부르고, 그 한 번에 질문 넷을 같이 싣는다.
- * 사진은 여기까지 오지 않는다 — 넘어오는 것은 앞 단계가 적은 글뿐이다.
+ * 사진은 여기까지 오지 않는다. 넘어오는 것은 앞 단계가 적은 글뿐이다.
  */
 export async function POST(request: Request) {
   const config = loadConfig();

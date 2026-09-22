@@ -6,7 +6,7 @@ import { hasPass, takeQuota, whoFrom } from "@/core/demo-limit";
 /**
  * 사진 → 글. 키는 서버에만 있고 브라우저로 내려가지 않는다.
  *
- * 브라우저는 몇 장씩 나눠 보낸다 — 요청 몸집을 작게 유지하고,
+ * 브라우저는 몇 장씩 나눠 보낸다. 요청 몸집을 작게 유지하고,
  * 한 장이 끝날 때마다 화면이 바로 차오르게 하려고.
  */
 export async function POST(request: Request) {

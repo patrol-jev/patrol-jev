@@ -10,7 +10,7 @@ export interface Described {
   textInPhoto: string | null;
   /** 주소판 글자. 동을 골랐으면 그 동의 도로명으로 **대조·교정된** 값이다. */
   signText: string | null;
-  /** 고치기 전, 모델이 읽은 그대로. 안 고쳤으면 null — 화면에서 무엇을 고쳤는지 보이려고 둔다. */
+  /** 고치기 전, 모델이 읽은 그대로. 안 고쳤으면 null. 화면에서 무엇을 고쳤는지 보이려고 둔다. */
   signRaw: string | null;
   /**
    * 그 도로에 그 건물번호가 실제로 있는가. null = 대조할 수 없었다
@@ -47,7 +47,7 @@ export interface Judged {
 }
 
 /**
- * 1차 판단기 — 무엇을 쓰든 이 자리만 지키면 갈아끼울 수 있다.
+ * 1차 판단기. 무엇을 쓰든 이 자리만 지키면 갈아끼울 수 있다.
  *
  * ⚠ Jev 는 **이미지를 받지 않는다**(텍스트·JSON 만). 확인한 사실이다.
  * 그래서 사진은 먼저 생성 모델이 글로 옮기고, 이 자리에는 그 글이 들어온다.
@@ -63,7 +63,7 @@ export interface FirstPassInput {
     caption: string;
     /**
      * 앞 장과 몇 분 차이인가. 두 장 다 시각을 알 때만 채운다(EXIF 이거나 사진에 찍힌 워터마크).
-     * 모르면 null — 0 으로 채우면 「바로 다음 장」이라고 잘못 말하는 것이 된다.
+     * 모르면 null. 0 으로 채우면 「바로 다음 장」이라고 잘못 말하는 것이 된다.
      */
     minutesApart: number | null;
   } | null;
@@ -80,7 +80,7 @@ export interface Group {
   id: string;
   /** 사진 index 목록, 찍힌 차례대로. */
   photos: number[];
-  /** 주소판에서 읽은 주소. 없으면 빈 문자열 — **지어내지 않는다**. */
+  /** 주소판에서 읽은 주소. 없으면 빈 문자열. **지어내지 않는다**. */
   address: string;
   lane: LaneOrUnknown;
   /** 사람이 손댄 묶음인가. 로그의 「고친 횟수」가 여기서 나온다. */

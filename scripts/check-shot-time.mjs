@@ -1,7 +1,7 @@
 /**
  * 찍힌 시각 읽기 회귀 검사.
  *
- * `src/core/shot-time.ts` 를 고쳤으면 이걸 돌리세요. **API 를 부르지 않습니다** — 돈도 안 들고
+ * `src/core/shot-time.ts` 를 고쳤으면 이걸 돌리세요. **API 를 부르지 않습니다**. 돈도 안 들고
  * 인터넷도 필요 없습니다. 사진도 들어가지 않고, 실제로 읽힌 글자의 꼴만 들어갑니다.
  *
  *   npm run check:time      (노드 22 이상)
@@ -47,16 +47,16 @@ for (const [text, date, time] of CASES) {
   const label = JSON.stringify(text)?.replace(/\\n/g, " | ") ?? "null";
 
   if (time === null) {
-    if (got !== null) problems.push(`${label} — 시각이 없어야 하는데 ${got.time}`);
+    if (got !== null) problems.push(`${label}: 시각이 없어야 하는데 ${got.time}`);
     else console.log(`OK   ${label}\n      읽지 않음`);
     continue;
   }
   if (got === null) {
-    problems.push(`${label} — ${time} 이어야 하는데 못 읽음`);
+    problems.push(`${label}: ${time} 이어야 하는데 못 읽음`);
     continue;
   }
   if (got.time !== time || got.date !== date) {
-    problems.push(`${label} — ${date} ${time} 이어야 하는데 ${got.date} ${got.time}`);
+    problems.push(`${label}: ${date} ${time} 이어야 하는데 ${got.date} ${got.time}`);
     continue;
   }
   console.log(`OK   ${label}\n      ${got.date || "날짜 없음"}  ${got.time}`);
@@ -73,22 +73,22 @@ const GAPS = [
 
 for (const [a, b, want] of GAPS) {
   const got = minutesBetween(readStamp(a), readStamp(b));
-  if (got !== want) problems.push(`분 차이 ${a} → ${b} — ${want} 이어야 하는데 ${got}`);
+  if (got !== want) problems.push(`분 차이 ${a} → ${b}: ${want} 이어야 하는데 ${got}`);
   else console.log(`OK   분 차이 ${want}분`);
 }
 
 // 한쪽이라도 시각을 모르면 「모른다」여야 한다. 0 이 되면 바로 다음 장이라고 거짓말하는 것이다.
 if (minutesBetween(null, readStamp("오전 6:28")) !== null) {
-  problems.push("분 차이 — 한쪽을 모르면 null 이어야 한다");
+  problems.push("분 차이: 한쪽을 모르면 null 이어야 한다");
 } else {
   console.log("OK   한쪽을 모르면 null");
 }
 
 // EXIF 로 이미 아는 시각도 같은 꼴로 들어와야 한다.
 if (stampFromClock("2026-05-12", "06:28")?.minutes !== 388) {
-  problems.push("EXIF 시각 — 06:28 은 388분이어야 한다");
+  problems.push("EXIF 시각: 06:28 은 388분이어야 한다");
 } else if (stampFromClock("", "25:99") !== null) {
-  problems.push("EXIF 시각 — 말이 안 되는 시각은 null 이어야 한다");
+  problems.push("EXIF 시각: 말이 안 되는 시각은 null 이어야 한다");
 } else {
   console.log("OK   EXIF 시각");
 }
@@ -98,7 +98,7 @@ const ORDERS = [
   [["06:28", "06:31", "09:46"], 0],
   // 가운데 한 장이 앞 시각. 실물 회수본에서 이렇게 올라왔다.
   [["06:46", "06:28", "09:46"], 1],
-  // 시각을 못 읽은 장은 건너뛰고 센다 — 모르는 것을 거꾸로라고 하지 않는다.
+  // 시각을 못 읽은 장은 건너뛰고 센다. 모르는 것을 거꾸로라고 하지 않는다.
   [["09:46", null, "06:28"], 1],
   [[null, null, null], 0],
 ];
@@ -106,7 +106,7 @@ const ORDERS = [
 for (const [times, want] of ORDERS) {
   const stamps = times.map((time) => (time ? readStamp(`2026년 5월 12일 ${time}`) : null));
   const got = countBackwards(stamps);
-  if (got !== want) problems.push(`차례 ${times.join(",")} — ${want} 이어야 하는데 ${got}`);
+  if (got !== want) problems.push(`차례 ${times.join(",")}: ${want} 이어야 하는데 ${got}`);
   else console.log(`OK   차례 거꾸로 ${want}군데`);
 }
 
@@ -121,7 +121,7 @@ const DATES = [
 
 for (const [dates, want] of DATES) {
   const got = commonDate(dates);
-  if (got !== want) problems.push(`회차 날짜 ${JSON.stringify(dates)} — ${want || "(없음)"} 이어야 하는데 ${got || "(없음)"}`);
+  if (got !== want) problems.push(`회차 날짜 ${JSON.stringify(dates)}: ${want || "(없음)"} 이어야 하는데 ${got || "(없음)"}`);
   else console.log(`OK   회차 날짜 ${want || "(없음)"}`);
 }
 
