@@ -17,6 +17,24 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 공개 레포이고 살아 있는 사이트다. 무엇이 언제 나갔는지는 사람이 쥐고 있어야 한다.
 
+### 레포와 사이트는 따로 간다
+
+사이트에 먼저 나간 커밋을 레포에는 나중에 올릴 수 있다. 그래서 로컬 `main` 이 원격보다
+앞서 있을 수 있고, 무엇을 미룰지는 사람이 정한다.
+
+- push 문안을 내기 전에 `git log --oneline origin/main..main` 을 먼저 본다.
+  미뤄 둔 커밋이 있으면 **`git push` 한 줄을 내지 않는다.** 그 줄은 미룬 것까지 같이 민다.
+- 지금 밀 것만 밀 때는 원격 기준 작업 폴더에서 고치고 민다.
+
+```
+git worktree add --detach ../patrol-jev-push origin/main
+(../patrol-jev-push 에서 고치고 커밋)
+git -C ../patrol-jev-push push origin HEAD:main
+git worktree remove ../patrol-jev-push
+```
+
+- 미뤄 둔 커밋을 밀 때는 `git pull --rebase` 가 먼저다.
+
 **커밋 메시지는 영어로, 두 줄 안에.** 제목 한 줄, 필요하면 본문 한 줄.
 
 ```
@@ -43,6 +61,7 @@ Read the plate side from the first photo when both ends are plates.
 손대지 않는다. 글자 하나가 답을 바꾼다.
 
 **공개 레포다.** 특정 지명·기관명·부서명·사람 이름을 코드·주석·커밋 메시지·예시에 넣지 않는다.
+예외는 `LICENSE` 의 저작권자 한 줄(만든 사람의 실명)뿐이다. 소속·기관명은 거기에도 넣지 않는다.
 동 고유값은 전부 `patrol.config.json` 한 장으로 나가야 하고, 기본값은 `○○동` 처럼 비워 둔다.
 
 - **판단은 `src/core/judgment.ts` 한 곳에만.** 질문 문장과 문턱값이 흩어지면 사람이 검토할 수 없다.
