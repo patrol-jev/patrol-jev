@@ -477,10 +477,14 @@ function described(index, signText = null) {
   check("끝 장이 주소판이면 뒤", wherePlate([false, false, true, false, false, true]) === "trailing");
   check("주소판이 없으면 뒤로 본다", wherePlate([false, false, false]) === "trailing");
   check("빈 목록도 견딘다", wherePlate([]) === "trailing");
-  // 양끝이 다 주소판이면 더 재 봐야 갈라지지 않는다. 흔한 버릇(뒤)으로 둔다.
+  // 양끝이 다 주소판이면 첫 장을 본다. 자리 경계에서 사진이 딱 잘리면 이렇게 된다.
   check(
-    "양끝이 주소판이면 흔한 버릇으로",
-    wherePlate([true, false, false, true, false, false, true]) === "trailing",
+    "양끝이 주소판이면 첫 장이 정한다",
+    wherePlate([true, false, false, true, false, false, true]) === "leading",
+  );
+  check(
+    "양끝이 주소판이 아니면 흔한 버릇으로",
+    wherePlate([false, true, false, false, true, false]) === "trailing",
   );
 }
 
@@ -580,6 +584,30 @@ function described(index, signText = null) {
   const groups = buildGroups(photos, calls, THRESHOLDS, {}, 3);
   const shape = groups.map((g) => g.photos.length).join("-");
   check("과반이 아니면 리듬으로 안 자른다", shape === "2-3-4", shape);
+}
+
+
+// ── ㉕ 자리 경계에서 사진이 딱 잘렸을 때. 맛보기가 앞 열 장만 읽으면 실제로 이렇게 된다.
+//     석 장 리듬이면 열 장째가 주소판이라 **양 끝이 다 주소판**이 되고, 읽기가 뒤집힐 뻔한 자리다.
+{
+  const photos = [
+    described(0, "○○로12길 34"), described(1), described(2),
+    described(3, "○○로34길 5"), described(4), described(5),
+    described(6, "○○로9길 1"),
+  ];
+  const calls = [
+    judged(0, "none_of_these", { addressPlate: 0.95 }),
+    judged(3, "none_of_these", { addressPlate: 0.95, sameLocation: 0.2 }),
+    judged(6, "none_of_these", { addressPlate: 0.95, sameLocation: 0.2 }),
+    ...[1, 2, 4, 5].map((i) => judged(i, "waste_cleanup", { sameLocation: 0.2 })),
+  ];
+  const groups = buildGroups(photos, calls, THRESHOLDS, {}, 3);
+  const shape = groups.map((g) => g.photos.length).join("-");
+
+  check("잘려도 앞의 자리들은 온전하다", shape === "3-3-1", shape);
+  check("첫 자리가 주소판 한 장이 되지 않는다", groups[0]?.photos.length === 3, shape);
+  check("주소가 옆자리로 밀리지 않는다", groups[0]?.address === "○○로12길 34", groups[0]?.address);
+  check("잘린 자국은 맨 끝에 남는다", groups[2]?.address === "○○로9길 1", groups[2]?.address);
 }
 
 if (problems.length > 0) {

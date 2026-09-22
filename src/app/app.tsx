@@ -355,6 +355,7 @@ export default function PatrolApp({
           taking = files.slice(0, quota.left);
           addNotice(
             `맛보기는 하루 ${quota.limit}장까지라 앞의 ${taking.length}장만 읽습니다. ` +
+              "마지막 자리는 중간에서 잘릴 수 있습니다. " +
               "받아서 본인 키로 쓰시면 장수 제한이 없습니다.",
           );
         }
@@ -1008,19 +1009,24 @@ function Home({
       )}
 
       {mode === "auto" && quota.limit > 0 && quota.left !== null && (
-        <p className="text-[11.5px] text-[var(--muted)]">
-          맛보기라 하루 {quota.limit}장까지 읽어 드립니다.{" "}
-          <b className="text-[var(--ink)]">오늘 {quota.left}장 남음.</b> 제한 없이 쓰시려면{" "}
-          <a
-            href="https://github.com/patrol-jev/patrol-jev"
-            target="_blank"
-            rel="noreferrer"
-            className="underline underline-offset-2"
-          >
-            받아서
-          </a>{" "}
-          본인 키로 쓰세요.
-        </p>
+        <div className="space-y-0.5 text-[11.5px] text-[var(--muted)]">
+          <p>
+            맛보기라 하루 {quota.limit}장까지 읽어 드립니다.{" "}
+            <b className="text-[var(--ink)]">오늘 {quota.left}장 남음.</b>
+          </p>
+          <p>
+            제한 없이 쓰시려면{" "}
+            <a
+              href="https://github.com/patrol-jev/patrol-jev"
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2"
+            >
+              받아서
+            </a>{" "}
+            본인 키로 쓰세요.
+          </p>
+        </div>
       )}
 
       <label

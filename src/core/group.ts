@@ -97,7 +97,13 @@ export function buildGroups(
  * 끝나니 앞이 짧고 뒤가 길다. 뒤에 찍는 사람은 그 반대다.
  *
  * 끝 한 장만 보면 청소와 상관없는 사진 한 장이 앞뒤에 섞이는 것만으로 읽기가 뒤집힌다.
- * 몇 장인지로 보면 그런 것 한둘에는 안 흔들린다. 똑같으면 흔한 버릇(뒤)으로 둔다.
+ * 몇 장인지로 보면 그런 것 한둘에는 안 흔들린다.
+ *
+ * 앞뒤가 똑같으면 **첫 장이 주소판인지**를 본다. 양 끝이 다 주소판인 경우가 그렇다 —
+ * 사진이 자리 경계에서 딱 잘리면(맛보기가 앞 열 장만 읽을 때처럼) 이렇게 된다.
+ * 그때 뒤로 읽으면 **첫 자리가 주소판 한 장뿐**이 되는데, 그 한 장은 거기서 무슨 일을 했는지
+ * 말해 주지 못하고 그 뒤로 자리가 통째로 한 장씩 밀린다. 앞으로 읽으면 잘린 자국이
+ * **맨 끝**에 남는다 — 잘린 쪽은 끝이니 그쪽이 맞다.
  */
 export function wherePlate(plateAt: boolean[]): "leading" | "trailing" {
   const first = plateAt.indexOf(true);
@@ -106,7 +112,8 @@ export function wherePlate(plateAt: boolean[]): "leading" | "trailing" {
 
   const head = first;
   const tail = plateAt.length - 1 - last;
-  return head < tail ? "leading" : "trailing";
+  if (head !== tail) return head < tail ? "leading" : "trailing";
+  return plateAt[0] ? "leading" : "trailing";
 }
 
 /**
