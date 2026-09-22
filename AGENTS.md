@@ -10,6 +10,26 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 # patrol-jev — 이 레포의 규약
 
+## 먼저, 사람에게 묻는 자리
+
+**커밋하지 않는다. 밀지 않는다. 배포하지 않는다.** 파일을 고치는 데까지가 도우미의 몫이다.
+`git commit` · `git push` · 서버 배포는 **사람이 직접** 한다. 도우미가 주는 것은 **명령어와 문안**뿐이다.
+
+공개 레포이고 살아 있는 사이트다. 무엇이 언제 나갔는지는 사람이 쥐고 있어야 한다.
+
+**커밋 메시지는 영어로, 두 줄 안에.** 제목 한 줄, 필요하면 본문 한 줄.
+
+```
+Fix places shifting when a batch is cut at ten photos
+
+Read the plate side from the first photo when both ends are plates.
+```
+
+왜 그렇게 고쳤는지, 무엇을 재 봤는지, 버린 대안은 무엇인지 — **커밋에 적지 않는다.**
+그 분량은 이력을 읽는 사람에게 소음이고, 무엇이 바뀌었는지가 오히려 안 보인다.
+맥락은 코드 주석과 `docs/` 에 남긴다. 그쪽은 한국어다 — 쓰는 사람이 읽을 글이다.
+
+
 **공개 레포다.** 특정 지명·기관명·부서명·사람 이름을 코드·주석·커밋 메시지·예시에 넣지 않는다.
 동 고유값은 전부 `patrol.config.json` 한 장으로 나가야 하고, 기본값은 `○○동` 처럼 비워 둔다.
 
