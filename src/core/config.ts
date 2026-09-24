@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Thresholds } from "./lanes";
 
@@ -11,6 +11,10 @@ export interface PatrolConfig {
   dong: string;
   /** 담당 부서·반 이름. */
   unit: string;
+  /** 일지 순찰자 칸에 적을 이름 또는 직위. 비우면 그 칸은 비워 둔다. 지어내지 않는다. */
+  officer: string;
+  /** 발치 「PJ(patrol-jev)」 가 가리킬 곳. 비우면 레포로 간다. */
+  threads: string;
   /**
    * 그 동에서 자주 나오는 도로명. 주소판 판독의 **참고**일 뿐 화이트리스트가 아니다.
    * 비워 두어도 동작한다. 읽은 대로 쓰는 것이 목록에 억지로 맞추는 것보다 낫다.
@@ -40,6 +44,15 @@ export interface PatrolConfig {
     /** 보내기 전에 줄이는 긴 변 픽셀. 작을수록 싸고 빠르다. */
     maxEdge: number;
     concurrency: number;
+    /**
+     * 모델이 답하기 전에 얼마나 생각하나. 비워 두면 모델 기본값.
+     *
+     * 이 단계는 본 것을 옮겨 적기만 한다. 판단은 Jev 가, 문장은 코드가 한다. 그래서 생각할
+     * 거리가 없는데, 기본값으로 두면 한 장마다 수백 토큰을 생각에 쓰고 그만큼 기다린다.
+     * 실물 30장 실측: 기본값 26초 → "none" 14초, 주소판 9장 글자는 똑같이 읽었다.
+     * 모델마다 받는 값이 다르다("minimal" 을 거부하는 모델이 있다). 틀리면 400 이 온다.
+     */
+    reasoningEffort?: "none" | "low" | "medium" | "high";
   };
   firstPass: {
     /** 끄면 1차 판단 없이 전부 「모르겠음」으로 두고 사람이 정한다. */
@@ -67,30 +80,45 @@ export interface PatrolConfig {
 export const DEFAULT_CONFIG: PatrolConfig = {
   dong: "○○동",
   unit: "환경순찰",
+  officer: "",
+  threads: "",
   roads: [],
   seasonalSpots: [],
-  thresholds: { lane: 0.8, sameLocation: 0.5, addressPlate: 0.7, sameMinutes: 2, splitMinutes: 5 },
+  thresholds: { lane: 0.8, sameLocation: 0.5, addressPlate: 0.7, sameMinutes: 2, splitMinutes: 5, workShot: 0.8 },
   vision: {
+    // gpt-6-luna 도 통하지만 한 장마다 생각을 두 배로 해서 느리다(실물 30장 58초 대 26초).
+    // 읽은 주소판 글자는 같았다. 옮겨 적는 일에는 이쪽이 맞다.
     model: "gpt-5.6-luna",
     baseUrl: "https://api.openai.com/v1",
     maxTokens: 4096,
     maxEdge: 1024,
     concurrency: 6,
+    reasoningEffort: "none",
   },
   firstPass: { enabled: true, model: "jev-latest", concurrency: 8 },
   manual: { groupSize: 3 },
   log: { mode: "local" },
 };
 
-let cached: PatrolConfig | null = null;
+let cached: { at: number; config: PatrolConfig } | null = null;
 
-/** 서버에서만 부른다. 읽기 실패하면 기본값으로 돈다. 설정 없이도 켜져야 한다. */
+/**
+ * 서버에서만 부른다. 읽기 실패하면 기본값으로 돈다. 설정 없이도 켜져야 한다.
+ * 파일의 수정 시각이 바뀌면 다시 읽는다. 설정을 고치고 서버를 안 내려도 다음 요청에 반영된다.
+ */
 export function loadConfig(): PatrolConfig {
-  if (cached) return cached;
+  const file = join(process.cwd(), "patrol.config.json");
+  let at = 0;
   try {
-    const raw = readFileSync(join(process.cwd(), "patrol.config.json"), "utf8");
+    at = statSync(file).mtimeMs;
+  } catch {
+    at = 0;
+  }
+  if (cached && cached.at === at) return cached.config;
+  try {
+    const raw = readFileSync(file, "utf8");
     const parsed = JSON.parse(raw) as Partial<PatrolConfig>;
-    cached = {
+    const config: PatrolConfig = {
       ...DEFAULT_CONFIG,
       ...parsed,
       thresholds: { ...DEFAULT_CONFIG.thresholds, ...parsed.thresholds },
@@ -99,10 +127,11 @@ export function loadConfig(): PatrolConfig {
       manual: { ...DEFAULT_CONFIG.manual, ...parsed.manual },
       log: { ...DEFAULT_CONFIG.log, ...parsed.log },
     };
+    cached = { at, config };
   } catch {
-    cached = DEFAULT_CONFIG;
+    cached = { at, config: DEFAULT_CONFIG };
   }
-  return cached;
+  return cached.config;
 }
 
 /**
@@ -128,13 +157,15 @@ export function readKey(base: "OPENAI_API_KEY" | "TYPESAFE_API_KEY"): string | u
 /** 브라우저로 내려보내는 몫. 키나 경로는 절대 담지 않는다. */
 export type ClientConfig = Pick<
   PatrolConfig,
-  "dong" | "unit" | "seasonalSpots" | "thresholds" | "vision" | "firstPass" | "manual" | "log"
+  "dong" | "unit" | "officer" | "threads" | "seasonalSpots" | "thresholds" | "vision" | "firstPass" | "manual" | "log"
 >;
 
 export function toClientConfig(c: PatrolConfig): ClientConfig {
   return {
     dong: c.dong,
     unit: c.unit,
+    officer: c.officer,
+    threads: c.threads,
     seasonalSpots: c.seasonalSpots,
     thresholds: c.thresholds,
     vision: c.vision,

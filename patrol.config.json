@@ -2,6 +2,8 @@
   "$comment": "이 파일 한 장만 고치면 우리 동에서 씁니다. 나머지 코드는 손대지 마세요.",
   "dong": "○○동",
   "unit": "환경순찰",
+  "officer": "",
+  "threads": "https://www.threads.com/@patrol_jev",
   "roads": [],
   "seasonalSpots": [],
   "thresholds": {
@@ -9,14 +11,16 @@
     "sameLocation": 0.5,
     "addressPlate": 0.7,
     "sameMinutes": 2,
-    "splitMinutes": 5
+    "splitMinutes": 5,
+    "workShot": 0.8
   },
   "vision": {
     "model": "gpt-5.6-luna",
     "baseUrl": "https://api.openai.com/v1",
     "maxTokens": 4096,
     "maxEdge": 1024,
-    "concurrency": 6
+    "concurrency": 6,
+    "reasoningEffort": "none"
   },
   "firstPass": {
     "enabled": true,

@@ -17,23 +17,9 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 공개 레포이고 살아 있는 사이트다. 무엇이 언제 나갔는지는 사람이 쥐고 있어야 한다.
 
-### 레포와 사이트는 따로 간다
-
-사이트에 먼저 나간 커밋을 레포에는 나중에 올릴 수 있다. 그래서 로컬 `main` 이 원격보다
-앞서 있을 수 있고, 무엇을 미룰지는 사람이 정한다.
-
-- push 문안을 내기 전에 `git log --oneline origin/main..main` 을 먼저 본다.
-  미뤄 둔 커밋이 있으면 **`git push` 한 줄을 내지 않는다.** 그 줄은 미룬 것까지 같이 민다.
-- 지금 밀 것만 밀 때는 원격 기준 작업 폴더에서 고치고 민다.
-
-```
-git worktree add --detach ../patrol-jev-push origin/main
-(../patrol-jev-push 에서 고치고 커밋)
-git -C ../patrol-jev-push push origin HEAD:main
-git worktree remove ../patrol-jev-push
-```
-
-- 미뤄 둔 커밋을 밀 때는 `git pull --rebase` 가 먼저다.
+**갈래는 둘이다.** `main` 은 이 공개 레포다. `site` 는 사이트를 짓는 갈래이고 **어느 원격에도 밀지 않는다.**
+사이트에만 있는 것은 `site` 에서 하고, 여기 `main` 에는 누가 가져가도 무관한 것만 둔다.
+어느 갈래인지 애매하면 `site` 다.
 
 **커밋 메시지는 영어로, 두 줄 안에.** 제목 한 줄, 필요하면 본문 한 줄.
 

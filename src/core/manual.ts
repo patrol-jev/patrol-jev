@@ -29,7 +29,7 @@ export interface Phrase {
 }
 
 /**
- * 처음부터 있는 말 셋. 일지의 세 란과 하나씩 짝이다.
+ * 처음부터 있는 말 넷. 일지의 세 란과 짝이고, 계절특수만 배수구·그늘막 둘이다.
  *
  * 사람이 보고서에서 문구를 고쳤으면 고친 말이 여기 들어온다. 부서마다 쓰는 말이 달라도
  * 코드를 고칠 일이 없다는 `report.ts` 의 약속이 이 모드에서도 그대로 산다.
@@ -39,6 +39,7 @@ export function defaultPhrases(wording?: Partial<Wording>): Phrase[] {
   return [
     { text: say.patrolWork, lane: "waste_cleanup" },
     { text: say.drainWork, lane: "flood_season" },
+    { text: say.shadeWork, lane: "flood_season" },
     { text: say.facilityWork, lane: "risk_facility" },
   ];
 }

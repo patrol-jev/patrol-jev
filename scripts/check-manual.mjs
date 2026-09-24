@@ -109,7 +109,7 @@ function shape(groups) {
 // ── ⑧ 말 하나에 란 하나. 사람이 말을 고르면 란이 따라온다.
 {
   const list = defaultPhrases();
-  check("기본 말은 셋", list.length === 3, String(list.length));
+  check("기본 말은 넷", list.length === 4, String(list.length));
   check(
     "「폐기물 처리 및 수거」는 순찰사항",
     laneOfPhrase(DEFAULT_WORDING.patrolWork, list) === "waste_cleanup",
@@ -135,15 +135,15 @@ function shape(groups) {
   check("고친 말로 란을 찾는다", laneOfPhrase("폐기물 경고스티커 부착", list) === "waste_cleanup");
 }
 
-// ── ⑩ 써 본 말이 뒤에 붙는다. 기본 셋과 겹치면 두 번 안 나온다.
+// ── ⑩ 써 본 말이 뒤에 붙는다. 기본 넷과 겹치면 두 번 안 나온다.
 {
   const list = allPhrases(undefined, [
     { text: "가로등 파손 신고", lane: "risk_facility" },
     { text: DEFAULT_WORDING.patrolWork, lane: "waste_cleanup" },
   ]);
-  check("기본 셋이 앞", list.slice(0, 3).every((one, i) => one.text === defaultPhrases()[i].text));
-  check("써 본 말이 뒤에", list[3]?.text === "가로등 파손 신고", list[3]?.text);
-  check("겹치는 말은 한 번만", list.length === 4, String(list.length));
+  check("기본 넷이 앞", list.slice(0, 4).every((one, i) => one.text === defaultPhrases()[i].text));
+  check("써 본 말이 뒤에", list[4]?.text === "가로등 파손 신고", list[4]?.text);
+  check("겹치는 말은 한 번만", list.length === 5, String(list.length));
 }
 
 // ── ⑪ 나누기. 주소는 앞쪽만 가진다. 뒤쪽은 다른 자리라 앞의 주소를 물려주면 틀린 주소가 는다.

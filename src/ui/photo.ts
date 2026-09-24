@@ -1,10 +1,13 @@
 "use client";
 
+import { explainExifTime } from "@/core/exif-time";
+
 /**
  * 사진 준비는 **브라우저에서** 끝낸다.
  *
  * 원본은 서버로 가지 않는다. 긴 변을 줄인 사본만 간다. 그래야 싸고 빠르고,
  * 남는 것도 적다. 찍힌 시각도 여기서 읽는다(EXIF). 좌표는 읽지 않는다.
+ * 모델로 가는 사본은 그림판에서 다시 만든 것이라 기록(EXIF)이 통째로 없다.
  */
 
 export interface PreparedPhoto {
@@ -29,6 +32,25 @@ export interface PreparedPhoto {
    * 없어서, 그걸로 줄 세우면 사람이 고른 차례를 헝클어 놓는다.
    */
   sortKey: number;
+  /**
+   * 시각을 어디서 얻었나. "exif" = 사진 속 기록 · "text" = 사진에 찍힌 글자를 코드가 읽음 ·
+   * null = 모른다. 섬네일마다 그대로 보인다. 한 장이라도 모르면 줄 세우기가 올라온 차례로
+   * 바뀌는데, 어느 장 때문인지 안 보이면 사람이 손쓸 데가 없다.
+   */
+  timeFrom: "exif" | "text" | null;
+  /**
+   * 시각을 못 읽은 장만 채운다. 브라우저가 넘겨준 파일의 크기와, 그 앞머리에 시각 기록(EXIF)
+   * 자리가 있었는지. 폰 사진첩에는 시각이 보이는데 여기서 못 읽는 일이 있다. 그때 기록이
+   * 넘어오다 벗겨졌는지(흔적 없음) 넘어왔는데 못 읽었는지(흔적 있음)를 이 둘이 가른다.
+   */
+  probe: {
+    bytes: number;
+    exifMark: boolean;
+    why: string;
+    head: string;
+    /** 앞머리 64KB 그대로. 폰이 다시 쓴 파일을 사람이 내려받아 살펴볼 수 있게. 사진은 안 나간다. */
+    headBytes: ArrayBuffer | null;
+  } | null;
 }
 
 /** 못 연 사진 한 장. 이름을 들고 다닌다. 「몇 장 실패」만으로는 어느 것인지 모른다. */
@@ -108,8 +130,10 @@ async function prepareOne(
   maxEdge: number,
   needData: boolean,
 ): Promise<Omit<PreparedPhoto, "index">> {
-  const shot = await readShotTime(file);
+  let shot = await readShotTime(file);
   const bitmap = await toBitmap(file);
+  // 폰이 파일을 늦게 내주는 수가 있다. 그림으로는 열렸으니 앞머리를 한 번 더 읽어 본다.
+  if (shot.stamp === 0) shot = await readShotTime(file);
 
   const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
   const width = Math.round(bitmap.width * scale);
@@ -136,6 +160,8 @@ async function prepareOne(
     date: shot.date,
     time: shot.time,
     sortKey: shot.stamp,
+    timeFrom: shot.stamp > 0 ? "exif" : null,
+    probe: shot.stamp > 0 ? null : await probeOf(file, shot.why),
   };
 }
 
@@ -195,10 +221,65 @@ async function toBase64(blob: Blob): Promise<string> {
 }
 
 /**
- * 찍힌 시각. **HEIC 도 그대로 읽힌다**. 실물로 확인했다.
+ * 시각을 못 읽은 장의 진단. 파일 앞머리 64KB 와 그 지문 여섯 자.
+ * PC 원본과 폰이 넘긴 파일이 같은 바이트인지 지문으로 가린다. 다르면 폰이 파일을 다시 쓴 것이고,
+ * 같으면 읽는 쪽이 다르게 도는 것이다. 앞머리는 사람이 내려받아 볼 수 있게 들고 있는다. 사진은 안 나간다.
+ */
+async function probeOf(file: File, why: string): Promise<NonNullable<PreparedPhoto["probe"]>> {
+  let headBytes: ArrayBuffer | null = null;
+  let head = "";
+  try {
+    headBytes = await file.slice(0, 64 * 1024).arrayBuffer();
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", headBytes));
+    head = [...digest.slice(0, 3)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    // 못 읽으면 지문 없이 간다. 진단용이라 도구를 멈출 일이 아니다.
+  }
+  return { bytes: file.size, exifMark: await hasExifMark(file), why, head, headBytes };
+}
+
+/** 파일 앞머리에 EXIF 자리 표시(`Exif`)가 있는가. JPEG 는 이 자리가 맨 앞 64KB 안에 온다. */
+async function hasExifMark(file: File): Promise<boolean> {
+  try {
+    const head = new Uint8Array(await file.slice(0, 128 * 1024).arrayBuffer());
+    for (let i = 0; i + 5 < head.length; i++) {
+      if (
+        head[i] === 0x45 &&
+        head[i + 1] === 0x78 &&
+        head[i + 2] === 0x69 &&
+        head[i + 3] === 0x66 &&
+        head[i + 4] === 0 &&
+        head[i + 5] === 0
+      ) {
+        return true;
+      }
+    }
+  } catch {
+    // 못 읽으면 없다고 친다. 진단용이라 도구를 멈출 일이 아니다.
+  }
+  return false;
+}
+
+/**
+ * 찍힌 시각. JPEG 는 앞머리를 코드가 직접 읽는다(`readExifTime`). 아이폰 Safari 에서
+ * exifr 가 멀쩡한 기록을 30장 전부 못 읽은 일이 있어서다. 그 길로 못 읽은 것(HEIC 등)만
+ * exifr 로 한 번 더 본다. **HEIC 도 exifr 로 그대로 읽힌다**. 실물로 확인했다.
  * 메신저를 거친 사진은 EXIF 가 벗겨져 못 읽는다. 그때는 빈칸으로 둔다.
  */
-async function readShotTime(file: File): Promise<{ date: string; time: string; stamp: number }> {
+async function readShotTime(
+  file: File,
+): Promise<{ date: string; time: string; stamp: number; why: string }> {
+  // 못 읽으면 까닭을 들고 돌아온다. 폰마다 다르게 비는 일이 있어 사람이 전해 줄 말이 필요하다.
+  let why = "";
+  try {
+    const head = new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer());
+    const direct = explainExifTime(head);
+    if (direct.time) return { ...direct.time, why: "" };
+    why = `${direct.why} (${Math.round(head.length / 1024)}KB)`;
+  } catch (cause) {
+    // 앞머리를 못 읽어도 아래 길이 남아 있다.
+    why = `앞머리 읽기 오류 ${cause instanceof Error ? cause.name : String(cause)}`;
+  }
   try {
     const exifr = (await import("exifr")).default;
     const tags = (await exifr.parse(file, ["DateTimeOriginal", "CreateDate"])) as
@@ -206,12 +287,14 @@ async function readShotTime(file: File): Promise<{ date: string; time: string; s
       | undefined;
     const shot = tags?.DateTimeOriginal ?? tags?.CreateDate;
     if (shot instanceof Date && !Number.isNaN(shot.getTime())) {
-      return { date: isoDate(shot), time: hhmm(shot), stamp: shot.getTime() };
+      return { date: isoDate(shot), time: hhmm(shot), stamp: shot.getTime(), why: "" };
     }
-  } catch {
+    why += " · exifr 도 못 읽음";
+  } catch (cause) {
     // EXIF 가 없거나 못 읽는 사진도 있다. 그래도 도구는 돌아야 한다.
+    why += ` · exifr 오류 ${cause instanceof Error ? cause.name : String(cause)}`;
   }
-  return { date: "", time: "", stamp: 0 };
+  return { date: "", time: "", stamp: 0, why };
 }
 
 function isoDate(value: Date): string {

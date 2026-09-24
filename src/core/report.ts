@@ -36,6 +36,8 @@ export interface Wording {
   shadeHeading: string;
   /** 계절특수 배수 건에 붙는 말. */
   drainWork: string;
+  /** 계절특수 그늘막 건에 붙는 말. 캡션에 그늘막이 있으면 배수 말 대신 이것. */
+  shadeWork: string;
 }
 
 export const DEFAULT_WORDING: Wording = {
@@ -45,6 +47,7 @@ export const DEFAULT_WORDING: Wording = {
   facilityWork: "현장 확인",
   shadeHeading: "스마트그늘막 등 점검",
   drainWork: "배수구 주변 폐기물 처리 및 수거",
+  shadeWork: "스마트그늘막 점검",
 };
 
 export interface ReportInput {
@@ -95,7 +98,8 @@ export function buildReport(input: ReportInput): Report {
     seasonal(input.groups, input.seasonalSpots, say),
   ];
 
-  const full = [header, ...blocks.map((b) => b.text), "※ 특이사항: "].join("\n\n");
+  // 특이사항 줄은 안 낸다. 적을 것이 있으면 사람이 「※ 특이사항: …」 를 덧붙이고, 그 줄은 양식의 특이사항 칸으로 간다.
+  const full = [header, ...blocks.map((b) => b.text)].join("\n\n");
 
   return {
     header,
@@ -157,6 +161,10 @@ function waste(groups: Group[], say: Wording): ReportBlock {
  *        · {자리} 현장 확인
  *          ※
  *            →
+ *
+ * 자리에 적을 말을 쉼표로 나눠 적으면 차례로 · 줄, ※ 줄, → 줄에 들어간다.
+ * 「도로 파손 확인, 스마트불편신고(접수번호: …), 기 조치 요청한 곳으로 경과 관찰」 처럼.
+ * 쉼표가 없으면 · 줄에만 들어가고 ※ · → 는 비워 둔다. 그 칸은 사람이 채운다.
  */
 function facility(groups: Group[], say: Wording): ReportBlock {
   const mine = groups.filter((g) => g.lane === "risk_facility");
@@ -172,10 +180,12 @@ function facility(groups: Group[], say: Wording): ReportBlock {
 
   for (const group of mine) {
     const address = group.address.trim();
-    lines.push(`${H3_TIGHT}${address || "주소 미기재"} ${group.work?.trim() || say.facilityWork}`);
-    // 통보와 회신을 적을 자리를 비워 둔다. 이 칸은 사람이 채운다.
-    lines.push("       ※ ");
-    lines.push("         → ");
+    const parts = splitWork(group.work?.trim() || say.facilityWork);
+    lines.push(`${H3_TIGHT}${address || "주소 미기재"} ${parts[0]}`);
+    // 통보와 회신 자리. 쉼표로 나눠 적은 말이 있으면 그것을, 없으면 비워 두고 사람이 채운다.
+    lines.push(`       ※ ${parts[1] ?? ""}`);
+    if (parts.length <= 2) lines.push("         → ");
+    for (const rest of parts.slice(2)) lines.push(`         → ${rest}`);
   }
 
   return { key: "risk_facility", title: "위험시설물", text: lines.join("\n"), count: mine.length };
@@ -189,6 +199,7 @@ function facility(groups: Group[], say: Wording): ReportBlock {
  *       - 현장확인: N건 , 특이사항: 없음
  *        · {고정 지점}
  *     ○ {자리} 배수구 주변 폐기물 처리 및 수거
+ *     ○ {자리} 스마트그늘막 점검            ← 캡션에 그늘막이 있던 자리(group.shade)
  */
 function seasonal(groups: Group[], spots: string[], say: Wording): ReportBlock {
   const mine = groups.filter((g) => g.lane === "flood_season");
@@ -207,10 +218,31 @@ function seasonal(groups: Group[], spots: string[], say: Wording): ReportBlock {
 
   for (const group of mine) {
     const address = group.address.trim();
-    lines.push(`${H1}${address ? `${address} ` : ""}${group.work?.trim() || say.drainWork}`);
+    const work = group.work?.trim() || (group.shade ? say.shadeWork : say.drainWork);
+    lines.push(`${H1}${address ? `${address} ` : ""}${work}`);
   }
 
   return { key: "flood_season", title: "계절특수", text: lines.join("\n"), count: mine.length };
+}
+
+/** 쉼표로 나눈 말. 괄호 안의 쉼표는 나누지 않는다(「신고(접수번호: 1, 2)」). 빈 조각은 버린다. */
+export function splitWork(work: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of work) {
+    if (ch === "(" || ch === "（") depth += 1;
+    else if (ch === ")" || ch === "）") depth = Math.max(0, depth - 1);
+    if (ch === "," && depth === 0) {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  parts.push(current);
+  const trimmed = parts.map((one) => one.trim()).filter((one) => one.length > 0);
+  return trimmed.length > 0 ? trimmed : [work.trim()];
 }
 
 function formatDate(iso: string): string {
@@ -257,6 +289,7 @@ export function learnWording(generated: string, edited: string, current: Wording
       ["patrolWork", H2],
       ["facilityWork", H3_TIGHT],
       ["drainWork", H1],
+      ["shadeWork", H1],
     ] as const) {
       const tail = ` ${current[key]}`;
       if (!old.startsWith(prefix) || !old.endsWith(tail)) continue;

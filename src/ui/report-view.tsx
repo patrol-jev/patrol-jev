@@ -4,10 +4,10 @@ import { useState } from "react";
 import type { Report } from "@/core/report";
 
 /**
- * 산출은 여기까지다. **복붙할 수 있는 글**.
+ * 산출은 둘이다. **복붙할 수 있는 글**, 그리고 그 글을 그대로 담은 **한글 파일(기본 양식)**.
  *
- * hwp 양식으로 뽑아 주지 않는다. 부서 양식은 동마다 다르고,
- * 남의 양식을 맞춰 주기 시작하면 이 도구는 아무도 못 고치는 물건이 된다.
+ * 한글 파일은 브라우저 안에서 만든다. 사진도 글도 서버로 안 간다.
+ * 부서 양식이 따로 있으면 글을 복사해 붙이면 된다. 글이 원천이고 파일은 그 글을 옮겨 적은 것이다.
  */
 export function ReportView({
   report,
@@ -16,6 +16,7 @@ export function ReportView({
   onEdit,
   onReset,
   edited,
+  onHwpx,
 }: {
   report: Report;
   /** 화면에 보이고 복사되는 글. 사람이 고쳤으면 고친 글이다. */
@@ -24,9 +25,48 @@ export function ReportView({
   onEdit: (text: string) => void;
   onReset: () => void;
   edited: boolean;
+  /** 한글 파일 만들기. 끝나면 내려받기가 시작된다. */
+  onHwpx: () => Promise<void>;
 }) {
+  const [making, setMaking] = useState(false);
+  const [hwpxError, setHwpxError] = useState<string | null>(null);
+
+  async function makeHwpx() {
+    setMaking(true);
+    setHwpxError(null);
+    try {
+      await onHwpx();
+    } catch (cause) {
+      setHwpxError(cause instanceof Error ? cause.message : "한글 파일을 만들지 못했습니다.");
+    } finally {
+      setMaking(false);
+    }
+  }
+
   return (
     <div className="space-y-3">
+      <div
+        className="flex flex-wrap items-center gap-2 rounded-xl p-3"
+        style={{ background: "var(--paper)", border: "1px solid var(--line)" }}
+      >
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-medium">한글 파일로 받기</p>
+          <p className="text-[11px] text-[var(--muted)]">
+            아래 글을 그대로 담은 기본 양식(.hwpx)입니다. 전 · 후 사진도 같이 채웁니다. 이 브라우저 안에서 만들어집니다.
+          </p>
+          {hwpxError && <p className="mt-1 text-[11px]" style={{ color: "var(--ink)" }}>{hwpxError}</p>}
+        </div>
+        <button
+          onClick={makeHwpx}
+          disabled={making}
+          className="rounded-md px-3 py-1.5 text-[12px] font-semibold"
+          style={{ background: "var(--ink)", opacity: making ? 0.6 : 1 }}
+        >
+          {/* 글자만 Jev 빛. 사용자 지시(2026-09-24). 값을 그리는 자리가 아니라 산출로 가는 단추 하나뿐이다. */}
+          <span className="iri-text">{making ? "만드는 중" : "한글 파일(.hwpx)"}</span>
+        </button>
+      </div>
+
       {report.undecided > 0 && (
         <p
           className="rounded-lg px-3 py-2 text-[12px]"

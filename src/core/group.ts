@@ -8,9 +8,14 @@ import type { Described, Group, Judged } from "./types";
  * 자리를 끊는 자리는 셋뿐이고, 센 것부터 이 차례다.
  *
  *   ① **시각**: 앞 장과 `splitMinutes` 넘게 벌어졌으면 무엇보다 먼저 끊는다.
- *      걸어서 다음 자리까지 가는 데 걸리는 시간이 자리를 나눈다.
+ *      걸어서 다음 자리까지 가는 데 걸리는 시간이 자리를 나눈다. 시각을 아는 장과 모르는 장
+ *      사이도 끊는다. 모르는 것을 가까운 시각으로 치지 않는다.
  *   ② **주소판**: 주소판이 자리의 경계다. 그 사람이 주소판을 자리 앞에 찍는지 뒤에 찍는지는
- *      그날 사진이 알려 준다(`wherePlate`).
+ *      그날 사진이 알려 준다(`wherePlate`). Jev 가 전·후 작업 사진이라고 분명히 본 장은
+ *      글자가 읽혔어도 주소판으로 치지 않는다(`isWorkShot`).
+ *   ②-2 **갈래**: 이어 오던 자리의 갈래와 이 장의 갈래가 **둘 다 문턱 위로** 다르면 끊는다.
+ *      주소판과 같은 급이고 시각보다는 약하다. 그늘막(계절특수)은 지나가며 한 장씩 찍는데,
+ *      직전 청소 자리와 2분 안이면 ③ 의 시각 잇기가 그 자리에 붙여 버렸다(`laneCuts`).
  *   ③ **같은자리 확률**: 주소판이 하나도 없는 덩이에서만 쓴다. 애매하면 나눈다.
  *
  * 브라우저에서도 돈다. 사람이 고칠 때마다 서버에 다시 묻지 않으려고.
@@ -24,13 +29,26 @@ export function buildGroups(
   /** 판정도 시각도 없을 때 몇 장씩 끊을지. 마지막 수단이다. */
   groupSize = 3,
 ): Group[] {
+  // 시각을 아는 장과 모르는 장은 **따로** 묶는다. 모르는 장이 줄 끝에 붙어 있으면 주소판이 앞인지
+  // 뒤인지 읽는 셈(`wherePlate`)이 그쪽으로 기울어 뒤집히고, 그러면 자리가 통째로 한 장씩 밀린다.
+  // 실물 30장 + 자료 사진 9장에서 그랬다. 두 무리는 어차피 시각 규칙 ①이 갈라 놓는다.
+  const timed = described.filter((d) => stamps[d.index]);
+  if (timed.length > 0 && timed.length < described.length) {
+    const untimed = described.filter((d) => !stamps[d.index]);
+    return [
+      ...buildGroups(timed, judged, thresholds, stamps, groupSize),
+      ...buildGroups(untimed, judged, thresholds, stamps, groupSize),
+    ];
+  }
+
   const byIndex = new Map(judged.map((j) => [j.index, j]));
   const signByIndex = new Map(described.map((d) => [d.index, d.signText]));
-  const order = [...described].sort((a, b) => a.index - b.index);
+  const order = lineUp(described, stamps);
   const indices = order.map((one) => one.index);
   const plateAt = indices.map((index) =>
     isPlate(byIndex.get(index), signByIndex.get(index), thresholds),
   );
+  demoteTwinPlates(plateAt, indices, byIndex, stamps, thresholds);
   const plates = new Set(indices.filter((_, i) => plateAt[i]));
 
   const role = wherePlate(plateAt);
@@ -40,15 +58,21 @@ export function buildGroups(
   //    거기서 한 일이 아니다.
   const byTime = indices.map((index, i) => {
     if (i === 0) return false;
-    const gap = minutesBetween(stamps[indices[i - 1]], stamps[index]);
-    if (gap === null) return false;
+    const before = stamps[indices[i - 1]];
+    const now = stamps[index];
+    const gap = minutesBetween(before, now);
+    // 한쪽만 시각을 알면 같은 자리로 잇지 않는다. 둘 다 모르면 시각으로는 아무 말도 못 한다.
+    if (gap === null) return Boolean(before) !== Boolean(now);
     return gap < 0 || gap > splitMinutesOf(thresholds);
   });
 
-  // 큰 덩이. 시각과 주소판이 정한 자리.
+  // ②-2 갈래가 갈리는 자리. 주소판이 없어도 청소 자리에 점검 사진이 붙지 않게.
+  const byLane = laneCuts(indices, plateAt, byIndex, thresholds, (i) => byTime[i] || byPlate[i]);
+
+  // 큰 덩이. 시각과 주소판과 갈래가 정한 자리.
   const segments: number[][] = [];
   for (let i = 0; i < indices.length; i++) {
-    if (i === 0 || byTime[i] || byPlate[i]) segments.push([]);
+    if (i === 0 || byTime[i] || byPlate[i] || byLane[i]) segments.push([]);
     segments[segments.length - 1].push(i);
   }
 
@@ -76,12 +100,55 @@ export function buildGroups(
           byIndex,
           thresholds,
           stamps,
+          described,
         ),
       );
     }
   }
 
   return groups;
+}
+
+/**
+ * 무슨 차례로 볼 것인가. **시각을 아는 장은 시각순**, 시각을 모르는 장은 그 뒤에 올라온 차례(index)로.
+ *
+ * 폰 사진첩은 최신이 앞이라 올라온 차례가 찍은 차례와 거꾸로일 때가 많다. 그대로 두면
+ * 앞 장과의 간격이 전부 음수라 장마다 끊기고, 자리는 낱장으로 흩어진다(실물 30장에서 그랬다).
+ * 사진을 열 때 EXIF 로 이미 줄 세웠으면 여기서는 같은 차례가 다시 나온다. 사진 속 글자에서
+ * 시각을 되찾은 장이 있으면 그때 비로소 여기서 줄이 선다.
+ *
+ * 시각을 모르는 장은 **아는 장 사이에 꽂지 않는다.** 어디에 꽂아도 짐작이고, 틀리면 자리가 한 장씩
+ * 밀린다. 대신 맨 뒤에 올라온 차례로 둔다. 그 장들은 묶기에서도 아는 장과 안 섞인다(`buildGroups` ①).
+ * 실물 순찰 사진에 EXIF 없는 자료 사진(파일로 받은 것)이 섞인 날, 예전 규칙(한 장이라도 모르면
+ * 전부 올라온 차례)은 시각 규칙을 통째로 꺼서 39장이 31자리로 흩어졌다. 화면(app.tsx)도 이 함수로 줄을 선다.
+ */
+export function lineUp<T extends { index: number }>(
+  items: T[],
+  stamps: Record<number, ShotStamp | null>,
+): T[] {
+  const all = [...items].sort((a, b) => a.index - b.index);
+  const untimed = all.filter((one) => !stamps[one.index]);
+  const byIndex = all.filter((one) => stamps[one.index]);
+  if (byIndex.length < 2) return all;
+
+  // 시각은 분까지라 같은 분에 찍힌 장이 흔하다. 그 안의 차례는 올라온 차례가 정하되,
+  // 올라온 차례가 전체로 거꾸로였으면 같은 분 안에서도 거꾸로로 본다.
+  let forward = 0;
+  let backward = 0;
+  for (let i = 1; i < byIndex.length; i++) {
+    const apart = minutesBetween(stamps[byIndex[i - 1].index], stamps[byIndex[i].index]);
+    if (apart === null || apart === 0) continue;
+    if (apart > 0) forward += 1;
+    else backward += 1;
+  }
+  const tie = backward > forward ? -1 : 1;
+
+  const timed = byIndex.sort((a, b) => {
+    const apart = minutesBetween(stamps[a.index], stamps[b.index]);
+    if (apart === null || apart === 0) return (a.index - b.index) * tie;
+    return apart > 0 ? -1 : 1;
+  });
+  return [...timed, ...untimed];
 }
 
 /**
@@ -149,6 +216,9 @@ function rhythmOf(
   }
 
   // 과반이 같은 길이다. 그것이 그날의 리듬이고, 잣대도 그 길이다.
+  // 다만 「주소판 한 장」이 과반이면 리듬이 아니라 주소판 앞뒤 판독이 틀렸다는 신호다. 그 길이로
+  // 자르면 자리마다 낱장이 된다. 그때는 설정값으로 느슨하게 끊는다.
+  if (best <= 1) return loose;
   return most * 2 > sizes.length ? { size: best, limit: best } : loose;
 }
 
@@ -158,6 +228,109 @@ function plateCuts(plateAt: boolean[], role: "leading" | "trailing"): boolean[] 
     if (i === 0) return false;
     return role === "leading" ? nowPlate : plateAt[i - 1];
   });
+}
+
+/**
+ * 갈래가 정하는 경계.
+ *
+ * 한 자리의 석 장은 갈래가 서로 달라 보인다. 치우기 전은 「순찰사항」, 치운 뒤는 「모르겠음」,
+ * 주소판도 「모르겠음」. 그래서 갈래가 다르다고 무조건 끊으면 자리가 낱장으로 흩어진다.
+ * 끊는 것은 **이어 오던 자리가 이미 한 갈래를 문턱 위로 정했고, 이 장도 다른 갈래를 문턱 위로
+ * 말할 때**뿐이다. 「모르겠음」과 주소판은 어느 쪽에도 표를 안 낸다.
+ *
+ * 그늘막이 그 경우다. 청소 자리를 끝내고 걸어가다 그늘막을 한 장 찍으면 앞 장과 2분 안이라
+ * 시각 잇기가 그 자리에 붙였고, 일지에는 청소 자리 주소 뒤에 그늘막이 딸려 나갔다.
+ * 반대로 그늘막 뒤에 다음 청소 자리가 오면 그늘막이 그 자리 주소를 물려받았다.
+ *
+ * 시각·주소판이 이미 끊은 자리에서는 이어 오던 갈래를 새로 센다. 그 둘이 그은 선을 여기서
+ * 다시 긋지 않는다.
+ *
+ * 끊는 자리의 **양쪽 가운데 한쪽은 확인 사진**(전·후가 「해당 없음」, 그 확신이 `workShot` 이상)이어야 한다.
+ * 그늘막·배수구·위험시설물 사진이 그렇다. 치운 뒤 사진은 배수구가 드러나 「계절특수」 0.8 로 나오는 날이
+ * 있고(실물 12번 장), 「해당 없음」 0.69~0.78 로 애매하게 나오는 날도 있다(실물 18·24번 장). 그 장으로 끊으면
+ * 청소 자리의 전·후가 갈린다. 그래서 확신이 문턱 아래인 장은 확인 사진으로 안 치고, **바로 앞 장이 분명한
+ * 「전」 사진이면** 이 장은 그 자리의 후 사진이라 보고 끊지 않는다. 전 사진 뒤에는 늘 후 사진이 온다.
+ * 확인 사진 뒤에 다음 자리의 「전」 사진이 오는 것(그늘막 → 청소 자리)은 끊는다.
+ */
+function laneCuts(
+  indices: number[],
+  plateAt: boolean[],
+  byIndex: Map<number, Judged>,
+  thresholds: Thresholds,
+  cutBefore: (i: number) => boolean,
+): boolean[] {
+  const cuts = indices.map(() => false);
+  let running: Lane | null = null;
+  /** 이어 오던 갈래를 정한 장이 확인 사진이었나. */
+  let runningIsCheck = false;
+  const sure = workShotOf(thresholds);
+  for (let i = 0; i < indices.length; i++) {
+    const judgment = byIndex.get(indices[i]);
+    const mine = plateAt[i] ? null : sureLane(judgment, thresholds);
+    const check =
+      judgment?.stage === "not_applicable" && (judgment.stageProbabilities?.not_applicable ?? 0) >= sure;
+    if (i === 0 || cutBefore(i)) {
+      running = mine;
+      runningIsCheck = Boolean(mine) && check;
+      continue;
+    }
+    if (mine && running && mine !== running) {
+      if (!check && !runningIsCheck) continue;
+      // 바로 앞 장이 분명한 「전」이면 이 장은 그 자리의 후다. 갈래가 달라 보여도 한 자리.
+      const previous = byIndex.get(indices[i - 1]);
+      if (previous?.stage === "before" && (previous.stageProbabilities?.before ?? 0) >= sure) continue;
+      cuts[i] = true;
+      running = mine;
+      runningIsCheck = check;
+      continue;
+    }
+    if (mine && !running) {
+      running = mine;
+      runningIsCheck = check;
+    }
+  }
+  return cuts;
+}
+
+/**
+ * 같은 분 안에 주소판이 둘 붙어 있으면 한 자리의 것이다. **더 분명한 쪽만 주소판으로 친다.**
+ *
+ * 치운 뒤 사진 구석에 옆 건물 주소판이 잡히면 모델이 그 글자를 적어 오고, Jev 도 「주소판 글자다」
+ * 0.9 를 준다. 전·후 확신이 문턱(`workShot`)에 못 미치면 `isWorkShot` 도 못 가려낸다(실물 24번 장:
+ * 후 0.66 · 주소판 글자 0.92 · 옆집 주소). 그러면 그 장에서 자리가 끊기고 **옆집 주소가 이 자리에 붙는다.**
+ * 바로 다음 장이 진짜 주소판(「해당 없음」 0.94 · 0.98)이었다. 둘을 견줘 「해당 없음」 확신과 주소판
+ * 확률의 합이 큰 쪽을 남긴다. 진짜 주소판을 두 번 찍은 날에는 어느 쪽을 남겨도 같은 자리다.
+ * 시각을 모르는 날에는 안 한다. 붙어 있다는 것을 알 길이 없다.
+ */
+function demoteTwinPlates(
+  plateAt: boolean[],
+  indices: number[],
+  byIndex: Map<number, Judged>,
+  stamps: Record<number, ShotStamp | null>,
+  thresholds: Thresholds,
+): void {
+  if (thresholds.sameMinutes <= 0) return;
+  const score = (i: number) => {
+    const judgment = byIndex.get(indices[i]);
+    return (judgment?.stageProbabilities?.not_applicable ?? 0) + (judgment?.addressPlate ?? 0);
+  };
+  for (let i = 1; i < indices.length; i++) {
+    if (!plateAt[i - 1] || !plateAt[i]) continue;
+    const gap = minutesBetween(stamps[indices[i - 1]], stamps[indices[i]]);
+    if (gap === null || gap < 0 || gap > thresholds.sameMinutes) continue;
+    if (score(i - 1) < score(i)) plateAt[i - 1] = false;
+    else plateAt[i] = false;
+  }
+}
+
+/** 이 장이 문턱 위로 말하는 실질 갈래. 없으면 null. 「모르겠음」은 갈래가 아니다. */
+function sureLane(judgment: Judged | undefined, thresholds: Thresholds): Lane | null {
+  if (!judgment) return null;
+  let best: Lane = REAL_LANES[0];
+  for (const lane of REAL_LANES) {
+    if ((judgment.laneProbabilities[lane] ?? 0) > (judgment.laneProbabilities[best] ?? 0)) best = lane;
+  }
+  return (judgment.laneProbabilities[best] ?? 0) >= thresholds.lane ? best : null;
 }
 
 /**
@@ -246,13 +419,38 @@ function splitSegment(
  *
  * 확률 하나만 보면 한 장을 놓치는 날이 있고, 그 한 장 때문에 두 자리가 한 자리로 붙는다.
  */
-function isPlate(
+export function isPlate(
   judgment: Judged | undefined,
   signText: string | null | undefined,
   thresholds: Thresholds,
 ): boolean {
+  // 전 또는 후 작업 사진이라고 Jev 가 분명히 봤으면 주소판이 아니다. 글자가 읽혀 왔어도 그렇다.
+  if (isWorkShot(judgment, thresholds)) return false;
   if ((signText ?? "").trim().length > 0) return true;
   return (judgment?.addressPlate ?? 0) >= thresholds.addressPlate;
+}
+
+/**
+ * 이 장이 전 또는 후 작업 사진인가.
+ *
+ * 글자가 있으면 주소판으로 치는 규칙에는 구멍이 하나 있다. 치운 뒤 사진 구석에 길 표지판이나
+ * 옆 건물 주소판이 잡히면 모델이 그 글자를 적어 온다. 그러면 그 장이 주소판이 되어 자리가
+ * 거기서 끊기고, 진짜 주소판은 혼자 남아 다음 연번이 된다. 실물 30장 5회 가운데 3회가 그랬다.
+ *
+ * 그 장을 가려내는 값은 Jev 가 이미 내고 있다. 전·후를 묻는 답이다. 주소판 사진은 「해당 없음」으로
+ * 나오고(실물 45장 전부 0.84 이상), 작업 사진은 전이나 후로 나온다. 확률이 문턱을 넘을 때만 믿는다.
+ * 옛 판정(확률 없음)은 이 규칙을 안 탄다.
+ */
+function isWorkShot(judgment: Judged | undefined, thresholds: Thresholds): boolean {
+  if (!judgment || judgment.stage === "not_applicable") return false;
+  const sure = judgment.stageProbabilities?.[judgment.stage] ?? 0;
+  return sure >= workShotOf(thresholds);
+}
+
+/** 옛 설정에 이 값이 없으면 0.8 로 본다. */
+function workShotOf(thresholds: Thresholds): number {
+  const value = thresholds.workShot;
+  return typeof value === "number" && value > 0 ? value : 0.8;
 }
 
 /** 이 분 넘게 벌어지면 다른 자리. 옛 설정에 이 값이 없으면 5분으로 본다. */
@@ -268,6 +466,7 @@ function finish(
   byIndex: Map<number, Judged>,
   thresholds: Thresholds,
   stamps: Record<number, ShotStamp | null>,
+  described: Described[],
 ): Group {
   // 주소는 주소판에서만 온다. 없으면 빈 칸으로 둔다. 지어낸 주소가 없는 것보다 위험하다.
   let address = "";
@@ -285,7 +484,7 @@ function finish(
     .filter((time): time is string => Boolean(time))
     .sort();
 
-  return {
+  const group: Group = {
     id: `g${photos[0]}`,
     photos,
     address,
@@ -293,7 +492,42 @@ function finish(
     edited: false,
     time: clocks[0] ?? "",
   };
+  return markShade(group, described);
 }
+
+/**
+ * 그늘막 자리를 표시하고, 갈래가 안 선 자리는 계절특수로 올린다.
+ *
+ * Jev 는 그늘막 사진을 「모르겠음」으로 두는 날이 많다(자료 사진 5장 가운데 4장). 질문은 안 고치므로
+ * 앞 단계가 적어 온 글에서 코드가 읽는다. 주소판 글자가 있으면 주소판으로 치는 것과 같은 급의 규칙이다.
+ * Jev 가 다른 갈래를 분명히 정한 자리는 안 건드린다. 사람이 고친 자리는 `app.tsx` 가 같은 함수로 다시 읽는다.
+ */
+export function markShade(group: Group, described: Described[]): Group {
+  if (group.lane !== "unknown" && group.lane !== "flood_season") return group;
+  if (!isShadeSpot(group.photos, described)) return group;
+  return { ...group, lane: "flood_season", shade: true };
+}
+
+/**
+ * 이 자리가 그늘막인가.
+ *
+ * 계절특수 갈래는 배수구와 그늘막을 한 란에 담는다(일지의 란이 그렇다). 그런데 일지에 적는
+ * 말은 다르다. 배수구는 「주변 폐기물 처리 및 수거」, 그늘막은 「점검」이다. 갈래를 하나 더
+ * 만들면 질문(judgment.ts)을 고쳐야 하니, 어느 쪽인지는 **앞 단계가 적어 온 글에서 코드가
+ * 읽는다**. 사진을 읽은 모델은 본 것만 적으므로 그늘막이 있었으면 그 말이 캡션에 있다.
+ * 사람이 자리에 말을 정해 두었으면 그쪽이 이긴다(report.ts).
+ */
+export function isShadeSpot(photos: number[], described: Described[]): boolean {
+  const byIndex = new Map(described.map((d) => [d.index, d]));
+  return photos.some((index) => {
+    const one = byIndex.get(index);
+    if (!one) return false;
+    return SHADE_WORDS.test(`${one.caption} ${one.captionKo ?? ""} ${one.textInPhoto ?? ""}`);
+  });
+}
+
+/** 캡션에 이 말이 있으면 그늘막 자리. 영어 캡션이 판정에 쓰는 원문이라 영어가 먼저다. */
+const SHADE_WORDS = /sunshade|sun shade|shade|canop|parasol|awning|pergola|shelter|covered structure|roofed structure|bus stop|그늘막/i;
 
 /**
  * 묶음의 갈래 = **가장 센 한 장**이 정한다. 평균이 아니다.
@@ -305,6 +539,14 @@ function finish(
  * 가장 센 장으로 바꾸니 틀린 것 없이 5곳이 제자리를 찾았다.
  *
  * 대신 문턱은 높게 둔다(기본 0.8). 한 장만 보고 정하는 것이니 그 한 장은 분명해야 한다.
+ *
+ * 한 가지가 이보다 앞선다. **「치우기 전」이라고 분명히 본 장**(`workShot` 이상)이 있고 그 장의 제일 센 갈래가
+ * 순찰사항이면(문턱의 반은 넘어야 한다) 그 자리는 순찰사항이다. 치우기 전 사진이 있다는 것은 거기서 치웠다는
+ * 뜻이고, 그건 순찰사항 란의 일이다. 실물 30장에서 청소 자리 셋이 순찰사항 0.71·0.68·0.59 로 「모르겠음」이
+ * 됐는데 셋 다 「치우기 전」 0.85 이상이었다. 다른 회차에서는 같은 자리의 치운 뒤 사진이 옹벽 때문에
+ * 「위험시설물」 0.83 으로 나와 자리가 위험시설물이 됐다. 서로 다른 두 질문이 같은 쪽을 가리키는 전 사진이
+ * 한 장의 센 값보다 낫다. 위험시설물 사진도 「전」으로 나오는 날이 있지만 그 장은 제일 센 갈래가 위험시설물이라
+ * 여기 안 걸리고, 배수구 청소의 전 사진은 계절특수가 제일 세서 역시 안 걸린다.
  */
 export function decideLane(
   photos: number[],
@@ -315,6 +557,17 @@ export function decideLane(
 ): Group["lane"] {
   const deciding = decidingJudgment(photos, byIndex, thresholds, plates);
   if (!deciding) return "unknown";
+
+  // 치우기 전 사진이 분명하고 그 장이 순찰사항 쪽이면 순찰사항. 다른 장의 값보다 앞선다.
+  const before = photos.some((index) => {
+    const judgment = byIndex.get(index);
+    if (!judgment || judgment.stage !== "before" || (plates?.has(index) ?? false)) return false;
+    if ((judgment.stageProbabilities?.before ?? 0) < workShotOf(thresholds)) return false;
+    // 순찰사항이 제일 세되, 문턱의 반은 넘어야 한다. 셋 다 낮은 장은 아무 말도 안 한 것이다.
+    if (judgment.laneProbabilities.waste_cleanup < thresholds.lane / 2) return false;
+    return REAL_LANES.every((lane) => judgment.laneProbabilities[lane] <= judgment.laneProbabilities.waste_cleanup);
+  });
+  if (before) return "waste_cleanup";
 
   let best: Lane = REAL_LANES[0];
   for (const lane of REAL_LANES) {

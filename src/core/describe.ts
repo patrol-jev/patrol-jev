@@ -71,6 +71,7 @@ export async function describePhotos(
       body: JSON.stringify({
         model: config.vision.model,
         max_completion_tokens: config.vision.maxTokens,
+        ...(config.vision.reasoningEffort ? { reasoning_effort: config.vision.reasoningEffort } : {}),
         response_format: SHAPE,
         messages: [
           { role: "system", content: system },
@@ -103,7 +104,7 @@ export async function describePhotos(
       index: photo.index,
       caption: parsed.caption,
       // 한국어를 못 받았으면 영어라도 보인다. 빈 줄보다는 낫다.
-      captionKo: parsed.caption_ko || parsed.caption,
+      captionKo: koreanOnly(parsed.caption_ko) || parsed.caption,
       textInPhoto: parsed.text_in_photo,
       signText: address ? address.text : null,
       signRaw: address?.correction ? address.correction.from : null,
@@ -138,4 +139,16 @@ function parseShape(text: string): {
   } catch {
     return { caption: "", caption_ko: "", text_in_photo: null, sign_text: null };
   }
+}
+
+/**
+ * 한국어 설명에 섞여 온 다른 문자(아랍·히브리·태국·키릴·가나·한자)를 걷어 낸다.
+ * 모델이 「교통 콘」을 아랍어로 적어 보낸 날이 있었다. 번역하지 않고 그 낱말만 뺀다. 빈 칸이 낫다.
+ */
+export function koreanOnly(text: string): string {
+  return text
+    .replace(/[\u0400-\u04FF\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u0E00-\u0E7F\u3040-\u30FF\u4E00-\u9FFF]+/g, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.·])/g, "$1")
+    .trim();
 }

@@ -7,6 +7,7 @@ import { useState } from "react";
 import { decideLane, decidingJudgment } from "@/core/group";
 import type { Described, Group, Judged } from "@/core/types";
 import type { PreparedPhoto } from "./photo";
+import { Thumb } from "./thumb";
 import { ChoiceBar, Chip, Ms, NoulRow } from "./jev";
 
 /**
@@ -152,14 +153,7 @@ export function GroupCard({
 
       <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1">
         {photos.map((photo) => (
-          <button key={photo.index} type="button" onClick={() => setZoom(photo.url)}>
-            <img
-              src={photo.url}
-              alt=""
-              className="h-20 w-20 shrink-0 rounded-md object-cover"
-              style={{ background: "var(--wash)" }}
-            />
-          </button>
+          <Thumb key={photo.index} photo={photo} onOpen={() => setZoom(photo.url)} />
         ))}
       </div>
 

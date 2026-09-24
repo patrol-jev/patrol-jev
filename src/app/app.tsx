@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ClientConfig } from "@/core/config";
-import { buildGroups, decideLane } from "@/core/group";
+import { buildGroups, decideLane, isShadeSpot, lineUp, markShade } from "@/core/group";
 import { LANES, type Lane, type LaneOrUnknown } from "@/core/lanes";
 import {
   allPhrases,
@@ -12,10 +12,12 @@ import {
   splitManual,
   type Phrase,
 } from "@/core/manual";
+import { isPlate } from "@/core/group";
+import { buildIljiHwpx, PHOTO_RATIO } from "@/core/hwpx/ilji";
+import { pickPhotos, readReportText, type IljiSlots } from "@/core/ilji-slots";
 import { buildReport, DEFAULT_WORDING, learnWording, type Wording } from "@/core/report";
 import {
   commonDate,
-  countBackwards,
   minutesBetween,
   readStamp,
   stampFromClock,
@@ -26,7 +28,6 @@ import { GroupCard } from "@/ui/group-card";
 import { ManualCard } from "@/ui/manual-card";
 import { Meter, Tracks } from "@/ui/jev";
 import {
-  countHeic,
   IMAGE_ACCEPT,
   isImageFile,
   preparePhotos,
@@ -35,7 +36,9 @@ import {
   type PreparedPhoto,
 } from "@/ui/photo";
 import { DayCalendar, PastDay } from "@/ui/days";
+import { cellPhotoBytes, downloadBytes } from "@/ui/hwpx-photo";
 import { DongPicker, type DongChoice } from "@/ui/dong";
+import { ReportExtras } from "@/ui/report-extras";
 import { ReportView } from "@/ui/report-view";
 import {
   appendRun,
@@ -95,6 +98,10 @@ export default function PatrolApp({
   const [error, setError] = useState<string | null>(null);
   /** 오류는 아니지만 사람이 알아야 하는 것. 차례가 어긋났다든지. */
   const [notice, setNotice] = useState<string | null>(null);
+  /** 올린 직후 한 번 떴다 사라지는 알림. 화면 틀 안에 자리를 차지하지 않는다. */
+  const [toast, setToast] = useState<string | null>(null);
+  // 고정된 함수로 넘긴다. 도는 동안 화면이 자주 다시 그려지는데, 그때마다 새 함수면 닫는 시계가 매번 처음부터 돈다.
+  const closeToast = useCallback(() => setToast(null), []);
 
   const [photos, setPhotos] = useState<PreparedPhoto[]>([]);
   const [described, setDescribed] = useState<Record<number, Described>>({});
@@ -233,8 +240,61 @@ export default function PatrolApp({
     };
   }, [dong]);
 
+
   /** 화면에 보이고 복사되고 저장되는 글. 사람이 고쳤으면 고친 글이다. */
   const reportText = editedReport ?? report.full;
+
+  /**
+   * 지금 화면의 일지를 **자리**로 모은다. 기본 양식 파일도 부서 양식도 이 값을 그린다.
+   *
+   * 글이 원천이다. 화면의 글(고친 것 포함)을 자리로 나눠 담고, 자리마다 사진 한 장을 붙인다.
+   * 주소판은 빼고 치운 뒤 사진이 있으면 그것을 고른다. 사진은 셀 비율로 잘라 브라우저 안에서 넣는다.
+   */
+  const collectSlots = useCallback(
+    async (ratio: number): Promise<IljiSlots> => {
+      const plateAt = (index: number) => isPlate(judged[index], described[index]?.signText, config.thresholds);
+      const stageScore = (index: number, stage: "before" | "after") => {
+        const judgment = judged[index];
+        return judgment?.stage === stage ? (judgment.stageProbabilities?.[stage] ?? 0) : 0;
+      };
+      const picks = pickPhotos(groups, plateAt, stageScore);
+      const shot = (index: number | null) =>
+        index === null ? Promise.resolve(null) : cellPhotoBytes(photoByIndex[index]?.url, ratio);
+      const photos = await Promise.all(
+        picks.map(async (pick) => ({
+          caption: pick.caption,
+          note: pick.note,
+          pair: pick.pair,
+          before: await shot(pick.before),
+          after: await shot(pick.after),
+        })),
+      );
+      const read = readReportText(reportText);
+      const dongName = dongLabel ?? config.dong;
+      // 란마다 몇 자리였나. 보고서가 센 값을 그대로 옮긴다.
+      const keyOf = { waste_cleanup: "patrol", flood_season: "seasonal", risk_facility: "facility" } as const;
+      const counts = Object.fromEntries(report.blocks.map((block) => [keyOf[block.key], block.count]));
+      return {
+        dong: dongName,
+        unit: config.unit,
+        officer: config.officer,
+        dateLabel: read.dateLabel || date,
+        area: read.area || `${dongName} 관내`,
+        rows: read.rows,
+        counts,
+        photos,
+      };
+    },
+    [config, date, described, dongLabel, groups, judged, photoByIndex, report.blocks, reportText],
+  );
+
+  /** 한글 파일(기본 양식). 서버로는 아무것도 안 간다. */
+  const makeHwpx = useCallback(async () => {
+    const slots = await collectSlots(PHOTO_RATIO);
+    downloadBytes(buildIljiHwpx(slots), `${slots.dong} 현장 순찰 일지(기본 양식) ${date}.hwpx`);
+    // 파일로 받아 갔으면 복사한 것과 같다. 중간에 그만둔 회차가 아니다.
+    setCopied(true);
+  }, [collectSlots, date]);
 
   /** 알릴 말을 덮지 않고 잇는다. 한 회차에 알릴 것이 둘 이상일 수 있다. */
   const addNotice = useCallback((line: string) => {
@@ -288,7 +348,6 @@ export default function PatrolApp({
       logged.current = false;
 
       setMadeBy("manual");
-      if (countHeic(files) > 0) addNotice(HEIC_NOTE);
 
       let opened: Prepared;
       try {
@@ -306,6 +365,10 @@ export default function PatrolApp({
         return;
       }
       setOrderedBy(opened.ordered);
+      // 팝업은 7초면 사라진다. 까닭 대목은 사람이 옮겨 적어야 하니 안내 줄에도 남긴다.
+      const untimedNote = untimedToast(opened.photos);
+      setToast(untimedNote);
+      if (untimedNote) addNotice(untimedNote);
       const prepared = opened.photos;
       setPhotos((current) => [...current, ...prepared]);
 
@@ -365,7 +428,6 @@ export default function PatrolApp({
       logged.current = false;
 
       setMadeBy("auto");
-      if (countHeic(taking) > 0) addNotice(HEIC_NOTE);
 
       let opened: Prepared;
       try {
@@ -383,6 +445,10 @@ export default function PatrolApp({
         return;
       }
       setOrderedBy(opened.ordered);
+      // 팝업은 7초면 사라진다. 까닭 대목은 사람이 옮겨 적어야 하니 안내 줄에도 남긴다.
+      const untimedNote = untimedToast(opened.photos);
+      setToast(untimedNote);
+      if (untimedNote) addNotice(untimedNote);
 
       const prepared = opened.photos;
       const all = [...photos, ...prepared];
@@ -427,22 +493,25 @@ export default function PatrolApp({
       const timed = all.map((photo) => {
         const stamp = stamps[photo.index];
         if (!stamp || (photo.date && photo.time)) return photo;
-        return { ...photo, date: photo.date || stamp.date, time: photo.time || stamp.time };
+        return {
+          ...photo,
+          date: photo.date || stamp.date,
+          time: photo.time || stamp.time,
+          timeFrom: photo.timeFrom ?? ("text" as const),
+        };
       });
-      setPhotos(timed);
+      // 사진 속 글자까지 더해 시각을 아는 장은 그 차례로 줄 세우고, 모르는 장은 뒤로 뺀다. 폰 사진첩은
+      // 최신이 앞이라 올라온 차례가 거꾸로일 때가 많고, 그러면 앞 장과의 간격이 전부 음수라 자리가
+      // 낱장으로 흩어진다. 묶기(`buildGroups`)도 같은 규칙으로 줄을 서니 화면과 묶음이 어긋나지 않는다.
+      const everyTimed = timed.every((photo) => stamps[photo.index]);
+      const lined = lineUp(timed, stamps);
+      setPhotos(lined);
+      setOrderedBy(everyTimed ? "time" : "given");
 
-      // 묶기는 「찍은 차례 = 순찰 동선」을 전제로 돈다. 그 전제가 깨졌으면 말해 준다.
-      const backwards = countBackwards(all.map((photo) => stamps[photo.index]));
-      if (backwards > 0) {
-        addNotice(
-          `사진 ${backwards}군데가 찍힌 시각과 거꾸로 올라왔습니다. ` +
-            `묶기는 올라온 차례대로 합니다. 찍은 차례대로 다시 올리면 더 잘 묶입니다.`,
-        );
-      }
 
       const inputs: FirstPassInput[] = prepared.map((photo) => {
-        const position = all.findIndex((item) => item.index === photo.index);
-        const before = position > 0 ? all[position - 1] : null;
+        const position = lined.findIndex((item) => item.index === photo.index);
+        const before = position > 0 ? lined[position - 1] : null;
         const beforeText = before ? everything[before.index] : undefined;
         const mine = everything[photo.index];
         return {
@@ -575,9 +644,14 @@ export default function PatrolApp({
     setGroups((current) =>
       current.map((g) => {
         if (g.id !== id) return g;
-        const next = { ...change(g), edited: true, learned: false };
+        const next: Group = { ...change(g), edited: true, learned: false };
         // 주소가 있는 자리에서 갈래를 고쳤으면 그 자리를 기억해 둔다. 다음에 같은 자리면 그대로 둔다.
         if (next.address.trim() && next.lane !== g.lane) learnLane(next.address, next.lane);
+        // 사람이 계절특수로 고친 자리도 그늘막인지는 캡션에서 다시 읽는다. 아니면 배수구 말이 나간다.
+        if (next.lane !== g.lane) {
+          if (next.lane === "flood_season" && isShadeSpot(next.photos, Object.values(described))) next.shade = true;
+          else delete next.shade;
+        }
         return next;
       }),
     );
@@ -624,14 +698,19 @@ export default function PatrolApp({
       const byIndex = new Map(Object.values(judged).map((j) => [j.index, j]));
       const head = group.photos.slice(0, cut);
       const tail = group.photos.slice(cut);
-      const make = (photos: number[], suffix: string): Group => ({
-        id: `${group.id}${suffix}`,
-        photos,
-        address: "",
-        lane: decideLane(photos, byIndex, config.thresholds),
-        edited: true,
-        time: photos.map((i) => photoByIndex[i]?.time).filter(Boolean).sort()[0] ?? "",
-      });
+      const make = (photos: number[], suffix: string): Group => {
+        const lane = decideLane(photos, byIndex, config.thresholds);
+        const half: Group = {
+          id: `${group.id}${suffix}`,
+          photos,
+          address: "",
+          lane,
+          edited: true,
+          time: photos.map((i) => photoByIndex[i]?.time).filter(Boolean).sort()[0] ?? "",
+        };
+        // 그늘막 표식은 자리를 나눈 뒤에도 캡션에서 다시 읽는다. 물려받으면 배수구 쪽이 그늘막 말을 쓴다.
+        return markShade(half, Object.values(described));
+      };
 
       const next = [...current];
       next.splice(at, 1, make(head, "a"), make(tail, "b"));
@@ -660,6 +739,8 @@ export default function PatrolApp({
         mode={madeBy ?? mode}
         runs={runs}
       />
+
+      {toast && <Toast key={toast} text={toast} onClose={closeToast} />}
 
       {(error ?? notice) && (
         <p
@@ -773,7 +854,7 @@ export default function PatrolApp({
             <p className="text-[11px] text-[var(--muted)]">
               {orderedBy === "time"
                 ? "사진에 찍힌 시각이 다 있어 그 차례로 줄 세웠습니다."
-                : "찍힌 시각을 모르는 사진이 있어 올라온 차례 그대로 두었습니다. 자리가 어긋나 보이면 합치거나 나눠 주세요."}
+                : "찍힌 시각을 모르는 사진은 맨 뒤에 따로 두었습니다(점선 테두리). 자리가 어긋나 보이면 합치거나 나눠 주세요."}
             </p>
           )}
 
@@ -794,7 +875,7 @@ export default function PatrolApp({
                   photos={group.photos.map((i) => photoByIndex[i]).filter(Boolean)}
                   isFirst={order === 0}
                   phrases={manualPhrases}
-                  defaultWork={defaultWorkOf(group.lane, { ...DEFAULT_WORDING, ...wording })}
+                  defaultWork={defaultWorkOf(group, { ...DEFAULT_WORDING, ...wording })}
                   onAddress={(address) =>
                     touch(group.id, (g) => {
                       const next = { ...g, address };
@@ -844,7 +925,7 @@ export default function PatrolApp({
                     if (group.address.trim()) learnWork(group.address, work);
                   }}
                   phrases={phrases}
-                  defaultWork={defaultWorkOf(group.lane, { ...DEFAULT_WORDING, ...wording })}
+                  defaultWork={defaultWorkOf(group, { ...DEFAULT_WORDING, ...wording })}
                   onMergeUp={() => mergeUp(group.id)}
                   onSplitAt={(photoIndex) => splitAt(group.id, photoIndex)}
                 />
@@ -855,6 +936,7 @@ export default function PatrolApp({
 
           {stage === "report" && (
             <>
+              <ReportExtras collect={collectSlots} date={date} />
               <ReportView
                 report={report}
                 text={reportText}
@@ -872,6 +954,7 @@ export default function PatrolApp({
                   setWordingVersion((n) => n + 1);
                   setEditedReport(null);
                 }}
+                onHwpx={makeHwpx}
               />
               <AddMore onFiles={take} busy={busy} />
             </>
@@ -879,7 +962,7 @@ export default function PatrolApp({
         </>
       )}
 
-      <Footer runs={runs} />
+      <Footer runs={runs} threads={config.threads} />
     </div>
   );
 }
@@ -947,9 +1030,21 @@ function Header({
             <Dot ok={ready.firstPass} label="Jev" iri />
           </>
         )}
+        <Mark />
         {runs > 0 && <span className="tnum">· 지금까지 {runs}회</span>}
       </div>
     </header>
+  );
+}
+
+/** 이 도구의 표식. 옆의 점들과 같은 줄, 같은 크기. 카메라 하나에 PJ. */
+function Mark() {
+  return (
+    <span className="inline-flex items-center gap-1">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src="/icon.svg" alt="" width={11} height={11} className="h-[11px] w-[11px] rounded-[2px]" />
+      PJ
+    </span>
   );
 }
 
@@ -1160,7 +1255,7 @@ function Baseline({ onDone }: { onDone: (minutes: number | null) => void }) {
   );
 }
 
-function Footer({ runs }: { runs: number }) {
+function Footer({ runs, threads }: { runs: number; threads: string }) {
   const [open, setOpen] = useState(false);
   const stats = open ? summarise(readRuns()) : null;
 
@@ -1183,6 +1278,23 @@ function Footer({ runs }: { runs: number }) {
         >
           MIT
         </a>
+        {" · "}
+        {/* 이 도구의 이름. 스레드 글에서 온 사람이 다시 그 글로 돌아갈 수 있게 링크를 단다. 주소가 없으면 레포로. */}
+        <a
+          href={threads || "https://github.com/patrol-jev/patrol-jev"}
+          target="_blank"
+          rel="noreferrer"
+          className="underline underline-offset-2"
+        >
+          {/* 글줄 안에 그림을 놓는다. inline-flex 로 감싸면 그 덩이가 글줄 기준선을 벗어나 위로 뜬다. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/icon.svg" alt="" width={11} height={11} className="mr-1 inline-block h-[11px] w-[11px] rounded-[2px] align-[-1.5px]" />
+          PJ(patrol-jev)
+        </a>
+        {/* 이 판을 지은 때. 폰이 옛 코드를 쥐고 있는지 이 숫자 하나로 가린다. */}
+        {process.env.NEXT_PUBLIC_BUILT_AT && (
+          <span className="tnum">{` · 판 ${process.env.NEXT_PUBLIC_BUILT_AT}`}</span>
+        )}
       </p>
       {stats && (
         <p className="tnum mt-1">
@@ -1306,9 +1418,9 @@ function CameraMark() {
 }
 
 /** 그 란이 기본으로 적는 말. 카드가 「비우면 이렇게 적힌다」를 보여 줄 때 쓴다. */
-function defaultWorkOf(lane: LaneOrUnknown, say: Wording): string {
-  if (lane === "risk_facility") return say.facilityWork;
-  if (lane === "flood_season") return say.drainWork;
+function defaultWorkOf(group: Pick<Group, "lane" | "shade">, say: Wording): string {
+  if (group.lane === "risk_facility") return say.facilityWork;
+  if (group.lane === "flood_season") return group.shade ? say.shadeWork : say.drainWork;
   return say.patrolWork;
 }
 
@@ -1316,9 +1428,6 @@ function defaultWorkOf(lane: LaneOrUnknown, say: Wording): string {
  * 아이폰 사진을 바꾸는 데 도구를 한 번 받는다. 몇 초 멈춰 있으면 사람은 고장인 줄 안다.
  * 무슨 일이 일어나는지 먼저 말해 둔다.
  */
-const HEIC_NOTE =
-  "아이폰 사진(HEIC)이 있어 브라우저에서 변환해 씁니다. 변환 도구를 처음 한 번 내려받느라 " +
-  "잠깐 걸립니다. 원본은 나가지 않습니다.";
 
 /**
  * 못 연 사진을 사람 말로. **이름을 적는다**. 「2장 실패」만으로는 어느 것인지 알 수 없어
@@ -1328,6 +1437,37 @@ function failedNote(failed: FailedPhoto[]): string {
   const names = failed.slice(0, 3).map((one) => one.name).join(" · ");
   const more = failed.length > 3 ? ` 외 ${failed.length - 3}장` : "";
   return `${failed.length}장은 열지 못해 건너뜁니다 (${names}${more}). ${failed[0].why}`;
+}
+
+/**
+ * 찍힌 시각을 못 읽은 사진이 있으면 한 번 알린다. 없으면 null.
+ * 몇 장인지, 그리고 폰이 넘겨준 파일에 기록 흔적이 있었는지까지 적는다. 폰 사진첩에는
+ * 시각이 보이는데 여기서 못 읽는 일이 있어서, 어디서 사라졌는지를 사람이 전해 줄 수 있게.
+ */
+function untimedToast(photos: PreparedPhoto[]): string | null {
+  const untimed = photos.filter((photo) => photo.timeFrom === null).length;
+  if (untimed === 0) return null;
+  // 까닭(EXIF 자리·XMP·지문)은 photo.probe 에 남아 있다. 화면에는 안 적는다. 사람이 읽을 말이 아니다.
+  return `${photos.length}장 가운데 ${untimed}장은 찍힌 시각을 읽지 못해 올라온 차례로 묶었습니다(점선 테두리).`;
+}
+
+/** 아래에 잠깐 떴다가 사라지는 알림. 누르면 바로 닫힌다. */
+function Toast({ text, onClose }: { text: string; onClose: () => void }) {
+  useEffect(() => {
+    const timer = setTimeout(onClose, 7000);
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  return (
+    <button
+      type="button"
+      onClick={onClose}
+      className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-md rounded-lg px-4 py-3 text-left text-[12px] leading-relaxed shadow-lg"
+      style={{ background: "var(--ink)", color: "var(--paper)" }}
+    >
+      {text}
+    </button>
+  );
 }
 
 const subscribeNothing = () => () => {};

@@ -20,8 +20,17 @@ export class JevFirstPass implements FirstPass {
     this.#client = new TypeSafeClient({
       apiKey,
       defaultModel: config.firstPass.model,
-      // 판정 한 건은 짧다. 오래 매달려 있는 것보다 빨리 실패하고 재시도하는 편이 낫다.
-      timeout: 15_000,
+      // timeout 은 **시도당**이고, 넘기면 SDK 가 스스로 다시 묻는다(재시도 기본 2회, 타임아웃도 재시도).
+      //
+      // 09-24 실측(next start · 실물 30장 · 동시 8, 그리고 SDK 직접 호출로 시도마다 찍음):
+      //   · 라우트 자체는 100ms 안. 30장이 12~19초 걸린 것은 전부 Jev 호출 안이었다.
+      //   · 긴 꼬리의 정체는 **529(과부하) 뒤의 Retry-After 9~12초**였다. 529 는 0.3~3초 만에 오는데
+      //     SDK 가 그 대기를 그대로 지켜 한 장이 12~15초가 되고, 그 한 장이 30장 전체를 끈다.
+      //     그래서 서버가 달라는 대기는 1초까지만 듣고 우리 backoff(0.5·1·2초)로 다시 묻는다.
+      //   · 부하가 심한 시간대에는 성공 호출도 3~7초다(평소 0.2~0.4초). 이건 우리가 못 줄인다.
+      //   · 5초에 끊어 봤더니 그 시간대의 정상 답까지 끊겨 재시도만 늘고 실패가 났다. 10초가 맞다.
+      timeout: JEV_ATTEMPT_MS,
+      retry: { maxRetries: 3, backoffInitialMs: 500, backoffMaxMs: 2_000, maxRetryAfterMs: 1_000 },
     });
     this.name = config.firstPass.model;
   }
@@ -95,6 +104,9 @@ export class JevFirstPass implements FirstPass {
     };
   }
 }
+
+/** Jev 한 번 물음(시도 하나)에 이 이상 매달리지 않는다. 실측 근거는 위 주석. */
+const JEV_ATTEMPT_MS = 10_000;
 
 /** 1차 판단을 끈 경우. 전부 「모르겠음」으로 두고 사람이 정한다. 앱은 그대로 돈다. */
 export class NoFirstPass implements FirstPass {
