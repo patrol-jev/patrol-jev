@@ -3,6 +3,7 @@ import { visionSystemFor } from "./judgment";
 import { mapWithConcurrency } from "./jev";
 import { commonRoads, readAddress, type RoadIndex } from "./roads";
 import type { Described } from "./types";
+import { explainStatus } from "./why";
 
 /**
  * 사진 → 글. 파이프라인에서 **유일하게 생성 모델을 쓰는 자리**다.
@@ -65,7 +66,7 @@ export async function describePhotos(
 
   return mapWithConcurrency(photos, config.vision.concurrency, async (photo) => {
     const started = Date.now();
-    const response = await fetch(`${config.vision.baseUrl}/chat/completions`, {
+    const response = await fetchTwice(`${config.vision.baseUrl}/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey ?? ""}` },
       body: JSON.stringify({
@@ -90,7 +91,8 @@ export async function describePhotos(
     });
 
     if (!response.ok) {
-      throw new Error(`사진을 읽지 못했습니다 (${response.status}) ${short(await response.text())}`);
+      // 상태와 본문으로 까닭을 사람 말로. 키·잔액·한도·서버 장애가 다 다른 일이다.
+      throw new Error(explainStatus("vision", response.status, await response.text()));
     }
 
     const body = (await response.json()) as Completion;
@@ -109,6 +111,7 @@ export async function describePhotos(
       signText: address ? address.text : null,
       signRaw: address?.correction ? address.correction.from : null,
       signExists: address ? address.exists : null,
+      roadKnown: address ? address.known : null,
       ms,
       inputTokens: body.usage?.prompt_tokens ?? 0,
       outputTokens: body.usage?.completion_tokens ?? 0,
@@ -116,9 +119,21 @@ export async function describePhotos(
   });
 }
 
-/** 오류 본문은 길다. 화면에 띄울 만큼만 남긴다. */
-function short(text: string): string {
-  return text.replace(/\s+/g, " ").slice(0, 200);
+/**
+ * 연결이 끊겨 던져진 fetch 는 한 번만 다시 부른다(1초 뒤). 순간 끊김이 한 장 때문에 서른 장을 무르지 않게.
+ * 응답이 온 것(4xx·5xx)은 다시 부르지 않는다. 그건 연결이 아니라 서버의 답이다.
+ */
+async function fetchTwice(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (first) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    try {
+      return await fetch(url, init);
+    } catch {
+      throw first;
+    }
+  }
 }
 
 /** 형식은 서버가 보장하지만, 빈 응답·잘린 응답에도 파이프라인이 멈추면 안 된다. */

@@ -14,9 +14,9 @@ import type { PreparedPhoto } from "./photo";
  * 색은 쓰지 않는다. 무지개는 Jev 값, 회색은 생성 모델과 사람의 값이라는 규칙이 있다.
  * 시각은 코드가 읽은 것이라 어느 쪽도 아니다. 먹색과 흰색만 쓴다.
  */
-export function Thumb({ photo, onOpen }: { photo: PreparedPhoto; onOpen: () => void }) {
+export function Thumb({ photo, onOpen, picked }: { photo: PreparedPhoto; onOpen: () => void; picked?: boolean }) {
   const unknown = photo.timeFrom === null;
-  const label = unknown ? "" : photo.timeFrom === "text" ? `${photo.time} 글자` : photo.time;
+  const label = unknown ? "" : photo.timeFrom === "text" ? `${photo.time} 글자` : photo.timeFrom === "neighbor" ? `${photo.time} 옆 장` : photo.time;
 
   return (
     <button type="button" onClick={onOpen} className="relative shrink-0">
@@ -26,10 +26,19 @@ export function Thumb({ photo, onOpen }: { photo: PreparedPhoto; onOpen: () => v
         className="h-20 w-20 rounded-md object-cover"
         style={{
           background: "var(--wash)",
-          outline: unknown ? "2px dashed var(--ink)" : undefined,
-          outlineOffset: unknown ? "-2px" : undefined,
+          outline: picked ? "3px solid var(--ink)" : unknown ? "2px dashed var(--ink)" : undefined,
+          outlineOffset: picked || unknown ? "-2px" : undefined,
+          opacity: picked === false ? 0.6 : 1,
         }}
       />
+      {picked && (
+        <span
+          className="absolute right-1 top-1 rounded-full px-1.5 text-[11px] leading-5"
+          style={{ background: "var(--ink)", color: "var(--paper)" }}
+        >
+          ✓
+        </span>
+      )}
       {label && (
         <span
           className="tnum absolute bottom-1 left-1 rounded px-1 text-[10px] leading-4"

@@ -14,7 +14,8 @@
     "roads:build": "node scripts/build-road-index.mjs",
     "check:roads": "node --experimental-strip-types scripts/check-roads.mjs",
     "check:manual": "node --experimental-strip-types --import ./scripts/ts-hooks.mjs scripts/check-manual.mjs",
-    "check:hwpx": "node --experimental-strip-types --import ./scripts/ts-hooks.mjs scripts/check-hwpx.mjs"
+    "check:hwpx": "node --experimental-strip-types --import ./scripts/ts-hooks.mjs scripts/check-hwpx.mjs",
+    "check:period": "node --experimental-strip-types --import ./scripts/ts-hooks.mjs scripts/check-period.mjs"
   },
   "dependencies": {
     "@typesafe-ai/sdk": "^0.6.0",

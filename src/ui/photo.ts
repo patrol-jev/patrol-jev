@@ -37,7 +37,7 @@ export interface PreparedPhoto {
    * null = 모른다. 섬네일마다 그대로 보인다. 한 장이라도 모르면 줄 세우기가 올라온 차례로
    * 바뀌는데, 어느 장 때문인지 안 보이면 사람이 손쓸 데가 없다.
    */
-  timeFrom: "exif" | "text" | null;
+  timeFrom: "exif" | "text" | "neighbor" | null;
   /**
    * 시각을 못 읽은 장만 채운다. 브라우저가 넘겨준 파일의 크기와, 그 앞머리에 시각 기록(EXIF)
    * 자리가 있었는지. 폰 사진첩에는 시각이 보이는데 여기서 못 읽는 일이 있다. 그때 기록이

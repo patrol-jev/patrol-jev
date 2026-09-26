@@ -157,7 +157,7 @@ function waste(groups: Group[], say: Wording): ReportBlock {
  *
  *   □ 위험시설물 순찰사항
  *     ○ 위험건축물 점검
- *       - 현장확인: N건, 특이사항: 없음
+ *       - 현장확인: N건
  *        · {자리} 현장 확인
  *          ※
  *            →
@@ -176,7 +176,8 @@ function facility(groups: Group[], say: Wording): ReportBlock {
   }
 
   lines.push(`${H1}${say.facilityHeading}`);
-  lines.push(`${H2}현장확인: ${mine.length}건, 특이사항: 없음`);
+  // 「특이사항: 없음」 꼬리는 뺐다(09-26 사용자). 적을 것이 있으면 ※ 특이사항 줄로 간다.
+  lines.push(`${H2}현장확인: ${mine.length}건`);
 
   for (const group of mine) {
     const address = group.address.trim();
@@ -196,7 +197,7 @@ function facility(groups: Group[], say: Wording): ReportBlock {
  *
  *   □ 계절특수 순찰사항
  *     ○ 스마트그늘막 등 점검        ← 자리가 고정이라 설정의 목록을 그대로 적는다
- *       - 현장확인: N건 , 특이사항: 없음
+ *       - 현장확인: N건
  *        · {고정 지점}
  *     ○ {자리} 배수구 주변 폐기물 처리 및 수거
  *     ○ {자리} 스마트그늘막 점검            ← 캡션에 그늘막이 있던 자리(group.shade)
@@ -212,7 +213,7 @@ function seasonal(groups: Group[], spots: string[], say: Wording): ReportBlock {
 
   if (spots.length > 0) {
     lines.push(`${H1}${say.shadeHeading}`);
-    lines.push(`${H2}현장확인: ${spots.length}건 , 특이사항: 없음`);
+    lines.push(`${H2}현장확인: ${spots.length}건`);
     for (const spot of spots) lines.push(`${H3_TIGHT}${spot}`);
   }
 

@@ -89,6 +89,8 @@ export interface Table {
   body: Cell[][];
   /** 표를 품은 문단의 정렬. 오른쪽에 붙이는 결재란에 쓴다. */
   para?: number;
+  /** 이 표부터 새 쪽. 주간 일지가 날마다 새 쪽에서 시작할 때 쓴다. */
+  pageBreak?: boolean;
   /** 표 테두리이자 셀의 기본 테두리(`Fills` 로 얻은 번호). */
   fill: number;
 }
@@ -135,7 +137,7 @@ export function table(t: Table): string {
   );
   return tag(
     "hp:p",
-    { id: 0, paraPrIDRef: t.para ?? PARA.left, styleIDRef: 0, pageBreak: 0, columnBreak: 0, merged: 0 },
+    { id: 0, paraPrIDRef: t.para ?? PARA.left, styleIDRef: 0, pageBreak: t.pageBreak ? 1 : 0, columnBreak: 0, merged: 0 },
     tag("hp:run", { charPrIDRef: CHAR.body }, tbl) + tag("hp:run", { charPrIDRef: CHAR.body }, "<hp:t/>"),
   );
 }

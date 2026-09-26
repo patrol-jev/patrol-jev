@@ -1,6 +1,7 @@
 import { loadConfig, readKey } from "@/core/config";
 import { JevFirstPass, NoFirstPass } from "@/core/jev";
 import type { FirstPass, FirstPassInput } from "@/core/types";
+import { explainError } from "@/core/why";
 
 /**
  * 글 → 판정. 한 장에 한 번 부르고, 그 한 번에 질문 넷을 같이 싣는다.
@@ -37,7 +38,7 @@ export async function POST(request: Request) {
     return Response.json({ judged, firstPass: firstPass.name });
   } catch (error) {
     console.log(`judge ${items.length}장 실패 ${Date.now() - started}ms (동시 ${waiting})`);
-    return Response.json({ error: message(error) }, { status: 502 });
+    return Response.json({ error: explainError("jev", error) }, { status: 502 });
   } finally {
     inFlight -= 1;
   }
@@ -46,6 +47,3 @@ export async function POST(request: Request) {
 /** 지금 이 서버에서 같이 도는 judge 요청 수. 화면은 동시성 8 로 장마다 한 번 부른다. */
 let inFlight = 0;
 
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : "판정 중에 실패했습니다.";
-}

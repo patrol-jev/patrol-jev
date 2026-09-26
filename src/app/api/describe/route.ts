@@ -2,6 +2,7 @@ import { loadConfig, readKey } from "@/core/config";
 import { describePhotos, type PhotoInput } from "@/core/describe";
 import { loadDong } from "@/core/road-index";
 import { hasPass, takeQuota, whoFrom } from "@/core/demo-limit";
+import { explainError } from "@/core/why";
 
 /**
  * 사진 → 글. 키는 서버에만 있고 브라우저로 내려가지 않는다.
@@ -47,10 +48,7 @@ export async function POST(request: Request) {
     const described = await describePhotos(photos, loadConfig(), apiKey, loadDong(dong));
     return Response.json({ described });
   } catch (error) {
-    return Response.json({ error: message(error) }, { status: 502 });
+    // 「fetch failed」 같은 원문 대신 까닭과 할 일을 적는다. 담당자가 당황하지 않게.
+    return Response.json({ error: explainError("vision", error) }, { status: 502 });
   }
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : "사진을 읽는 중에 실패했습니다.";
 }

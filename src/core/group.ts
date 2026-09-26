@@ -51,7 +51,7 @@ export function buildGroups(
   demoteTwinPlates(plateAt, indices, byIndex, stamps, thresholds);
   const plates = new Set(indices.filter((_, i) => plateAt[i]));
 
-  const role = wherePlate(plateAt);
+  const role = wherePlate(plateAt, indices.map((index) => stamps[index] ?? null));
   const byPlate = plateCuts(plateAt, role);
 
   // ① 시각이 크게 벌어진 자리. 주소판보다 세다. 같은 주소판 앞이어도 두 시간 벌어졌으면
@@ -65,6 +65,11 @@ export function buildGroups(
     if (gap === null) return Boolean(before) !== Boolean(now);
     return gap < 0 || gap > splitMinutesOf(thresholds);
   });
+
+  // ② 보탬: 뒤에 찍는 사람이라도 주소판 **바로 다음**의 분명한 「후」 사진은 그 자리의 것이다(전 → 주소판 → 후 로 찍는 자리).
+  //    09-26 실물(66장): 그런 자리 셋이 주소판 뒤에서 잘려 「후」 한 장이 낱장이 되거나 다음 자리에 붙었다.
+  //    같은 분 안(sameMinutes)이고, 그 자리에 아직 분명한 「후」가 없을 때만. 「전」이 오면 종전대로 새 자리다.
+  if (role === "trailing") keepAfterShotWithPlate(byPlate, byTime, indices, byIndex, stamps, thresholds);
 
   // ②-2 갈래가 갈리는 자리. 주소판이 없어도 청소 자리에 점검 사진이 붙지 않게.
   const byLane = laneCuts(indices, plateAt, byIndex, thresholds, (i) => byTime[i] || byPlate[i]);
@@ -171,11 +176,35 @@ export function lineUp<T extends { index: number }>(
  * 그때 뒤로 읽으면 **첫 자리가 주소판 한 장뿐**이 되는데, 그 한 장은 거기서 무슨 일을 했는지
  * 말해 주지 못하고 그 뒤로 자리가 통째로 한 장씩 밀린다. 앞으로 읽으면 잘린 자국이
  * **맨 끝**에 남는다. 잘린 쪽은 끝이니 그쪽이 맞다.
+ *
+ * **시각을 알면 그보다 먼저 시각으로 읽는다.** 주소판마다 앞 장과의 간격과 뒷 장과의 간격을 견준다.
+ * 한 자리 안은 분 단위이고 자리 사이는 걸어가는 시간이다. 주소판 **뒤**가 더 벌어졌으면 그 장은
+ * 자리의 끝(뒤에 찍는 사람)이고, **앞**이 더 벌어졌으면 자리의 시작이다. 주소판마다 표를 내고 많은 쪽.
+ * 양 끝 장수를 세는 위 규칙은 마지막 자리에 주소판이 없는 날 그쪽으로 기울었다. 실물 30장(자리 10,
+ * 주소판은 늘 자리의 끝, 마지막 자리만 주소판 없이 석 장)에서 앞 2장 대 뒤 3장으로 「앞」이 되어
+ * 자리마다 옆 주소가 붙고 17자리·모르겠음 9가 나왔다. 간격으로는 9표 대 0표로 「뒤」다.
+ *
+ * 표는 **한쪽이 분명히 더 벌어졌을 때만**(큰 쪽이 작은 쪽의 두 배 하고도 1분 이상) 낸다. 치우는 데 2분,
+ * 걸어가는 데 1분이면 간격만으로는 어느 쪽도 못 정한다. 그런 주소판은 표를 안 내고, 표가 하나도 없거나
+ * 같으면 양 끝 장수 규칙으로 돌아간다.
  */
-export function wherePlate(plateAt: boolean[]): "leading" | "trailing" {
+export function wherePlate(plateAt: boolean[], stamps: Array<ShotStamp | null> = []): "leading" | "trailing" {
   const first = plateAt.indexOf(true);
   if (first < 0) return "trailing";
   const last = plateAt.lastIndexOf(true);
+
+  let leading = 0;
+  let trailing = 0;
+  for (let i = 0; i < plateAt.length; i++) {
+    if (!plateAt[i]) continue;
+    const before = i > 0 ? minutesBetween(stamps[i - 1] ?? null, stamps[i] ?? null) : null;
+    const after = i < plateAt.length - 1 ? minutesBetween(stamps[i] ?? null, stamps[i + 1] ?? null) : null;
+    if (before === null || after === null || before < 0 || after < 0) continue;
+    if (Math.max(before, after) < 2 * Math.min(before, after) + 1) continue;
+    if (after > before) trailing++;
+    else leading++;
+  }
+  if (leading !== trailing) return leading > trailing ? "leading" : "trailing";
 
   const head = first;
   const tail = plateAt.length - 1 - last;
@@ -220,6 +249,47 @@ function rhythmOf(
   // 자르면 자리마다 낱장이 된다. 그때는 설정값으로 느슨하게 끊는다.
   if (best <= 1) return loose;
   return most * 2 > sizes.length ? { size: best, limit: best } : loose;
+}
+
+/**
+ * 뒤에 찍는 사람의 주소판 경계 가운데, 바로 뒤가 분명한 「후」 사진이면 그 경계를 거둔다(`buildGroups` ② 보탬).
+ * 조건 셋: 앞 장과 같은 분 안 · 이 장이 「후」이고 「전」은 분명히 아님 · 이 자리(직전 경계 뒤)에 아직 그런 「후」가 없음.
+ * 시각을 모르는 장은 안 건드린다. 어느 자리 것인지 알 길이 없다.
+ */
+function keepAfterShotWithPlate(
+  byPlate: boolean[],
+  byTime: boolean[],
+  indices: number[],
+  byIndex: Map<number, Judged>,
+  stamps: Record<number, ShotStamp | null>,
+  thresholds: Thresholds,
+): void {
+  // 「후」로 나왔고 「전」일 확률이 문턱의 나머지(0.2) 아래면 된다. 이런 장은 후·해당없음 사이에서 흔들려
+  // 「후」 확신이 0.6~0.75 에 그치는데(09-26 실물 넷 전부), 자리를 새로 여는 것은 「전」이니 그것만 아니면 된다.
+  const notBefore = 1 - workShotOf(thresholds);
+  const isAfter = (i: number) => {
+    const judgment = byIndex.get(indices[i]);
+    return judgment?.stage === "after" && (judgment.stageProbabilities?.before ?? 1) <= notBefore;
+  };
+  let pieceHasAfter = false;
+  for (let i = 0; i < indices.length; i++) {
+    if (i === 0 || byTime[i]) {
+      pieceHasAfter = isAfter(i);
+      continue;
+    }
+    if (byPlate[i]) {
+      const gap = minutesBetween(stamps[indices[i - 1]], stamps[indices[i]]);
+      const close = thresholds.sameMinutes > 0 && gap !== null && gap >= 0 && gap <= thresholds.sameMinutes;
+      if (close && !pieceHasAfter && isAfter(i)) {
+        byPlate[i] = false;
+        pieceHasAfter = true;
+        continue;
+      }
+      pieceHasAfter = isAfter(i);
+      continue;
+    }
+    if (isAfter(i)) pieceHasAfter = true;
+  }
 }
 
 /** 주소판이 정하는 경계. 앞에 찍는 사람이면 주소판 **앞에서**, 뒤에 찍는 사람이면 주소판 **뒤에서** 끊는다. */
@@ -431,6 +501,25 @@ export function isPlate(
 }
 
 /**
+ * **사진 칸에서 뺄** 주소판인가. 묶기(`isPlate`)보다 좁다.
+ *
+ * 묶기는 글자가 읽혔으면 주소판으로 친다. 자리를 끊는 데는 그게 맞다. 그러나 사진 칸을 고를 때 같은 기준을 쓰면
+ * 치운 뒤 사진 벽에 붙은 작은 번호판(「9-1」)을 읽어 온 장이 주소판이 되어 **후 칸이 빈다**(09-26 실물: 옮겨 넣은 전
+ * 사진만 남고 깨끗해진 출입구 사진이 빠졌다). 그래서 여기서는 Jev 가 낸 「주소판일 확률」이 문턱을 넘는 장만 뺀다.
+ * 확률이 없는 옛 판정은 글자로 본다.
+ */
+export function isPlateShot(
+  judgment: Judged | undefined,
+  signText: string | null | undefined,
+  thresholds: Thresholds,
+): boolean {
+  if (isWorkShot(judgment, thresholds)) return false;
+  const score = judgment?.addressPlate;
+  if (typeof score === "number") return score >= thresholds.addressPlate;
+  return (signText ?? "").trim().length > 0;
+}
+
+/**
  * 이 장이 전 또는 후 작업 사진인가.
  *
  * 글자가 있으면 주소판으로 치는 규칙에는 구멍이 하나 있다. 치운 뒤 사진 구석에 길 표지판이나
@@ -613,4 +702,75 @@ export function decidingJudgment(
 
   // 실질 갈래가 전부 0 이어도 한 장은 돌려준다. 화면에 그릴 분포가 있어야 한다.
   return deciding ?? byIndex.get(looking[0]) ?? null;
+}
+
+/**
+ * 워터마크 연도 오독 바로잡기.
+ *
+ * 사진에 찍힌 「2026년 9월 23일 오전 9:32」 를 모델이 「2025년 …」 으로 옮겨 적은 날이 있었다(09-26 실물, 서른 장 가운데
+ * 한 장). 그 한 장은 하루가 아니라 한 해 앞으로 밀려 맨 앞에 혼자 서고, 같은 주소판 앞에서 찍은 두 장과 갈라졌다.
+ * 하루치 사진이니 날짜는 대개 하나다. **월·일은 같고 연도만 다른** 장을 그날 과반 날짜로 맞춘다. 월·일까지 다르면
+ * 손대지 않는다(정말 다른 날 사진일 수 있다). 과반 날짜가 없어도 손대지 않는다.
+ */
+export function snapYears(stamps: Record<number, ShotStamp | null>): Record<number, ShotStamp | null> {
+  const dates = Object.values(stamps).flatMap((stamp) => (stamp?.date ? [stamp.date] : []));
+  if (dates.length < 2) return stamps;
+  const count = new Map<string, number>();
+  for (const date of dates) count.set(date, (count.get(date) ?? 0) + 1);
+  const [common, n] = [...count.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (n * 2 <= dates.length) return stamps;
+  const out: Record<number, ShotStamp | null> = { ...stamps };
+  for (const [key, stamp] of Object.entries(stamps)) {
+    if (!stamp?.date || stamp.date === common) continue;
+    if (stamp.date.slice(5) === common.slice(5)) out[Number(key)] = { ...stamp, date: common };
+  }
+  return out;
+}
+
+/**
+ * 시각을 아예 모르는 장에게 **올라온 차례의 옆 장** 시각을 빌려 준다.
+ *
+ * 시각 없는 장은 줄 세우기에서 맨 뒤로 빠져 제 자리에 못 들어간다(09-26 실물: 청소 뒤 사진 한 장이 워터마크도 없이 와서
+ * 그 자리의 전 사진과 갈라졌다). 폰 사진첩에서 고른 차례는 대개 찍은 차례라, 바로 앞 장(없으면 뒤 장)과 같은 분으로
+ * 보면 시각 규칙이 그 자리로 이어 준다. 빌린 장은 `borrowed` 를 달아 화면이 「옆 장 시각」이라고 적는다.
+ *
+ * 시각을 아는 장이 **과반일 때만** 빌린다. 메신저를 거쳐 시각이 다 벗겨진 서른 장에 한 장만 시각이 있으면, 전부 그 한 장
+ * 시각을 빌려 한 자리로 뭉치게 된다. 그런 회차는 지금처럼 장수로 끊는 편이 낫다.
+ *
+ * 그리고 **연속 두 장까지만** 빌린다(09-26 실물 66장). 시각 없는 장이 열넷 연달아 오면 전부 한 분을 빌려 한 덩이가 되고,
+ * 그 안 차례는 올라온 차례뿐이라 리듬으로 잘리며 자리마다 한 장씩 밀렸다. 한두 장이 빠진 것은 「그 자리 사진 한 장이 시각을
+ * 잃은 것」이고, 열 장이 빠진 것은 「시각이 없는 무리」다. 뒤엣것은 시각 모르는 장으로 두어 따로 묶는다(`buildGroups` 첫 줄).
+ */
+const BORROW_RUN_MAX = 2;
+export function borrowStamps<T extends { index: number }>(
+  items: T[],
+  stamps: Record<number, ShotStamp | null>,
+): Record<number, ShotStamp | null> {
+  const sorted = [...items].sort((a, b) => a.index - b.index);
+  const timed = sorted.filter((one) => stamps[one.index]).length;
+  if (timed === 0 || timed * 2 < sorted.length) return stamps;
+  const out: Record<number, ShotStamp | null> = { ...stamps };
+  // 시각 없는 장이 연달아 몇 장인지 먼저 잰다. 긴 무리는 안 빌린다.
+  const runLength: number[] = sorted.map(() => 0);
+  for (let i = 0; i < sorted.length; ) {
+    if (stamps[sorted[i].index]) { i++; continue; }
+    let j = i;
+    while (j < sorted.length && !stamps[sorted[j].index]) j++;
+    // 앞뒤 이웃이 멀리 벌어진 무리는 어느 쪽 것인지 모른다. 그래도 안 빌리지는 않는다(09-26 실물에서 시험):
+    // 올라온 차례가 시각 차례와 다르면 무리 끝 장의 「다음 이웃」이 엉뚱한 장이라, 멀쩡히 붙던 자리까지 떨어졌다.
+    for (let k = i; k < j; k++) runLength[k] = j - i;
+    i = j;
+  }
+  const allowed = (i: number) => runLength[i] > 0 && runLength[i] <= BORROW_RUN_MAX;
+  for (let i = 1; i < sorted.length; i++) {
+    const me = sorted[i].index;
+    const before = out[sorted[i - 1].index];
+    if (!out[me] && before && allowed(i)) out[me] = { ...before, borrowed: true };
+  }
+  for (let i = sorted.length - 2; i >= 0; i--) {
+    const me = sorted[i].index;
+    const after = out[sorted[i + 1].index];
+    if (!out[me] && after && allowed(i)) out[me] = { ...after, borrowed: true };
+  }
+  return out;
 }

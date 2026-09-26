@@ -17,7 +17,7 @@
 
 import { writeFileSync } from "node:fs";
 import { unzipSync, strFromU8 } from "fflate";
-import { buildIljiHwpx } from "../src/core/hwpx/ilji.ts";
+import { buildIljiHwpx, buildWeeklyIljiHwpx } from "../src/core/hwpx/ilji.ts";
 import { pickPhotos, readReportText } from "../src/core/ilji-slots.ts";
 import { buildReport } from "../src/core/report.ts";
 
@@ -212,6 +212,26 @@ const sameXml =
   strFromU8(unzipSync(a)["Contents/section0.xml"]) === strFromU8(unzipSync(b)["Contents/section0.xml"]) &&
   strFromU8(unzipSync(a)["Contents/header.xml"]) === strFromU8(unzipSync(b)["Contents/header.xml"]);
 check("같은 입력이면 같은 XML", sameXml);
+
+// ── ④ 주간. 하루치 셋을 이어 붙이면 날마다 새 쪽에서 시작하고 사진은 한 쪽(표 셋)까지만.
+const daySlots = (n) => ({
+  dong: "○○동", unit: "", officer: "", dateLabel: `2026. 9. ${21 + n}.`, area: "○○동 관내",
+  rows: { seasonal: [], facility: [], community: [], patrol: [`○ ${n}일째`], etc: [] },
+  counts: { patrol: 5 },
+  photos: Array.from({ length: 5 }, (_, i) => ({ caption: `○○로${i + 1}길 ${n}`, pair: true, before: TINY_JPEG, after: TINY_JPEG })),
+});
+const weekly = buildWeeklyIljiHwpx([1, 2, 3].map((n) => ({ slots: daySlots(n), tag: `9월 3주차 · ${n}/5` })), "○○동 현장 순찰 일지 2026년 9월 3주차");
+const wz = unzipSync(weekly);
+const wsec = strFromU8(wz["Contents/section0.xml"]);
+const whead = strFromU8(wz["Contents/header.xml"]);
+const stripBreaks = [...wsec.matchAll(/<hp:p [^>]*pageBreak="1"[^>]*><hp:run [^>]*><hp:tbl /g)].length;
+check("주간: section 짝이 맞는다", wellFormed(wsec, "week") === null, wellFormed(wsec, "week") ?? "");
+check("주간: 띠 셋에 몇째 날", wsec.includes("9월 3주차 · 1/5") && wsec.includes("9월 3주차 · 2/5") && wsec.includes("9월 3주차 · 3/5"));
+check("주간: 둘째 날부터 띠가 새 쪽(표 문단 pageBreak)", stripBreaks === 2, String(stripBreaks));
+check("주간: 사진 쪽은 날마다 표 셋까지(15 자리 중 9)", (wsec.match(/<hp:tbl /g) ?? []).length === 3 * (2 + 3), String((wsec.match(/<hp:tbl /g) ?? []).length));
+check("주간: 사진 18장 = 그림 채움 18 = BinData 18", [...whead.matchAll(/binaryItemIDRef="(\w+)"/g)].length === 18 && Object.keys(wz).filter((n) => n.startsWith("BinData/")).length === 18);
+check("주간: 테두리 번호가 빈틈없이", (() => { const f = [...whead.matchAll(/<hh:borderFill id="(\d+)"/g)].map((m) => Number(m[1])); return f.every((id, i) => id === i + 1); })());
+check("주간: 하루치 한 날만이면 일지와 같은 표 수", (strFromU8(unzipSync(buildWeeklyIljiHwpx([{ slots: daySlots(1), tag: "9월 3주차 · 1/5" }], "t"))["Contents/section0.xml"]).match(/<hp:tbl /g) ?? []).length === 5);
 
 if (problems.length > 0) {
   console.error(`\n${checked - problems.length}/${checked} 통과 · 실패 ${problems.length}건`);

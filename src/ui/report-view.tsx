@@ -73,7 +73,7 @@ export function ReportView({
           style={{ background: "var(--wash)", color: "var(--muted)" }}
         >
           갈래가 안 정해진 묶음이 <b className="text-[var(--ink)]">{report.undecided}개</b> 있습니다.
-          이 묶음은 아래 어느 란에도 들어가지 않았습니다. 「현장」에서 정해 주세요.
+          이 묶음은 아래 일지에 기재되지 않습니다. 「현장」 목록에서 정해 주세요.
         </p>
       )}
 

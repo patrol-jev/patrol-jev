@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ClientConfig } from "@/core/config";
-import { buildGroups, decideLane, isShadeSpot, lineUp, markShade } from "@/core/group";
+import { borrowStamps, buildGroups, decideLane, isShadeSpot, lineUp, markShade, snapYears } from "@/core/group";
 import { LANES, type Lane, type LaneOrUnknown } from "@/core/lanes";
 import {
   allPhrases,
@@ -12,7 +12,7 @@ import {
   splitManual,
   type Phrase,
 } from "@/core/manual";
-import { isPlate } from "@/core/group";
+import { isPlate, isPlateShot } from "@/core/group";
 import { buildIljiHwpx, PHOTO_RATIO } from "@/core/hwpx/ilji";
 import { pickPhotos, readReportText, type IljiSlots } from "@/core/ilji-slots";
 import { buildReport, DEFAULT_WORDING, learnWording, type Wording } from "@/core/report";
@@ -37,8 +37,11 @@ import {
 } from "@/ui/photo";
 import { DayCalendar, PastDay } from "@/ui/days";
 import { cellPhotoBytes, downloadBytes } from "@/ui/hwpx-photo";
+import { PeriodReport } from "@/ui/period";
+import { deletePhotos, savePhotos } from "@/ui/photo-store";
+import type { SavedSpot } from "@/core/period";
 import { DongPicker, type DongChoice } from "@/ui/dong";
-import { ReportExtras } from "@/ui/report-extras";
+import { ReportExtras, weeklyFormOf } from "@/ui/report-extras";
 import { ReportView } from "@/ui/report-view";
 import {
   appendRun,
@@ -52,6 +55,7 @@ import {
   readBaseline,
   readDays,
   readDong,
+  removeDay,
   readLearned,
   readRuns,
   readWorks,
@@ -252,7 +256,8 @@ export default function PatrolApp({
    */
   const collectSlots = useCallback(
     async (ratio: number): Promise<IljiSlots> => {
-      const plateAt = (index: number) => isPlate(judged[index], described[index]?.signText, config.thresholds);
+      // 사진 칸에서 빼는 주소판은 묶기보다 좁게 본다. 벽의 작은 번호판을 읽어 온 작업 사진까지 빼면 후 칸이 빈다.
+      const plateAt = (index: number) => isPlateShot(judged[index], described[index]?.signText, config.thresholds);
       const stageScore = (index: number, stage: "before" | "after") => {
         const judgment = judged[index];
         return judgment?.stage === stage ? (judgment.stageProbabilities?.[stage] ?? 0) : 0;
@@ -477,27 +482,54 @@ export default function PatrolApp({
       }
       const genMs = performance.now() - genStarted;
 
+      // 읽은 도로명이 고른 동의 색인에 없는 장이 더 많으면 사진과 「우리 동」이 어긋난 것이다.
+      // 주소는 그대로 두고(고치지 않는다) 사람에게만 알린다. 동을 바꾸고 다시 올리면 대조가 된다.
+      const mismatch = dongMismatch(Object.values(fresh));
+      if (mismatch && dongLabel) {
+        addNotice(
+          `주소판 ${mismatch.read}장 가운데 ${mismatch.unknown}장의 도로명이 「${dongLabel}」 에 없습니다. ` +
+            "사진과 「우리 동」 을 맞춰 주세요. 다른 동 사진이면 위에서 동을 바꾸고 다시 올리면 주소가 대조됩니다.",
+        );
+      }
+
       // ── (B) 글 → 판정. 빠른 쪽. 앞 장이 있어야 「같은 자리인가」를 물을 수 있다.
       setPhase("judge");
       const jevStarted = performance.now();
       const everything = { ...described, ...fresh };
       // 찍힌 시각은 EXIF 가 먼저다. 없으면 사진에 찍힌 워터마크를 코드가 읽는다.
       // 메신저로 오간 사진은 EXIF 가 벗겨져 오고, 그럴 때 시각은 화면 글자에만 남는다.
-      const stamps: Record<number, ShotStamp | null> = {};
+      const rawStamps: Record<number, ShotStamp | null> = {};
       for (const photo of all) {
-        stamps[photo.index] =
+        rawStamps[photo.index] =
           stampFromClock(photo.date, photo.time) ?? readStamp(everything[photo.index]?.textInPhoto);
       }
+      // 연도만 다르게 읽힌 장은 그날로 맞추고, 시각이 아예 없는 장은 올라온 차례의 옆 장 시각을 빌린다.
+      // 둘 다 09-26 실물에서 자리가 갈라진 까닭이었다. 무엇을 손댔는지는 한 줄 알린다.
+      const snapped = snapYears(rawStamps);
+      const stamps = borrowStamps(all, snapped);
+      const snappedCount = all.filter((photo) => rawStamps[photo.index]?.date && snapped[photo.index]?.date !== rawStamps[photo.index]?.date).length;
+      const borrowedCount = all.filter((photo) => stamps[photo.index]?.borrowed).length;
+      if (snappedCount > 0) addNotice(`${snappedCount}장은 찍힌 글자의 연도가 다르게 읽혀 그날 날짜로 맞췄습니다.`);
+      // 시각을 어디서 얻었는지 한 줄로. 사진을 열 때의 안내는 파일 기록만 본 것이라, 찍힌 글자에서 되찾은 장까지 더해 다시 적는다.
+      const fromFile = all.filter((photo) => photo.timeFrom === "exif").length;
+      const fromText = all.filter((photo) => photo.timeFrom !== "exif" && rawStamps[photo.index]).length;
+      const none = all.filter((photo) => !stamps[photo.index]).length;
+      addNotice(
+        `시각: 파일 기록 ${fromFile}장 · 사진에 찍힌 글자 ${fromText}장 · 옆 장에서 빌림 ${borrowedCount}장` +
+          (none > 0 ? ` · 없음 ${none}장(올라온 차례로 묶음, 점선 테두리)` : "") +
+          (borrowedCount > 0 ? " · 빌린 장은 섬네일에 「옆 장」" : "") +
+          ".",
+      );
 
       // 되찾은 시각은 사진에 되돌려 적는다. 묶음 카드의 시각과 일지 머리글의 날짜가 이걸 쓴다.
       const timed = all.map((photo) => {
         const stamp = stamps[photo.index];
-        if (!stamp || (photo.date && photo.time)) return photo;
+        if (!stamp || (photo.date && photo.time && photo.date === stamp.date)) return photo;
         return {
           ...photo,
-          date: photo.date || stamp.date,
+          date: stamp.date || photo.date,
           time: photo.time || stamp.time,
-          timeFrom: photo.timeFrom ?? ("text" as const),
+          timeFrom: photo.timeFrom ?? (stamp.borrowed ? ("neighbor" as const) : ("text" as const)),
         };
       });
       // 사진 속 글자까지 더해 시각을 아는 장은 그 차례로 줄 세우고, 모르는 장은 뒤로 뺀다. 폰 사진첩은
@@ -571,7 +603,7 @@ export default function PatrolApp({
       setPhase("done");
       refreshQuota();
     },
-    [addNotice, config, described, dong, judged, photos, quota, refreshQuota, runManual],
+    [addNotice, config, described, dong, dongLabel, judged, photos, quota, refreshQuota, runManual],
   );
 
   /** 사진을 받는 자리는 하나다. 어느 길로 갈지는 여기서 갈린다. */
@@ -607,17 +639,6 @@ export default function PatrolApp({
       },
       config.log.mode,
     );
-    // 그날 일지도 같이 남긴다. 사진은 담지 않는다. 달력에서 다시 꺼내 볼 수 있게.
-    if (config.log.mode !== "off") {
-      saveDay({
-        date,
-        savedAt: new Date().toISOString(),
-        photos: photos.length,
-        groups: groups.length,
-        report: reportText,
-        dong: dongLabel ?? config.dong,
-      });
-    }
     setLogVersion((n) => n + 1);
   }, [
     phase,
@@ -629,13 +650,70 @@ export default function PatrolApp({
     edits,
     copied,
     config.log.mode,
-    config.dong,
-    date,
-    dongLabel,
     mode,
     report,
-    reportText,
   ]);
+
+  /* ── 그날 일지를 남긴다 ──────────────────────────────────
+   *
+   * 달력에서 다시 꺼내 보고, 기간 보고서가 세는 것이 이것이다. 회차가 끝난 뒤 **고칠 때마다** 같은
+   * 날짜를 덮어쓴다(합치기·나누기·갈래·말·글). 글과 자리 목록은 localStorage 에, 일지에 실린 사진의
+   * 작은 사본은 IndexedDB 에 같은 날짜로 남는다. 둘 다 이 기기 안이다. 보내는 코드는 없다.
+   * 사진은 어느 장을 싣는지가 바뀌었을 때만 다시 만든다(고칠 때마다 스무 장을 다시 그리지 않게).
+   */
+  const savedShots = useRef("");
+  useEffect(() => {
+    if (phase !== "done" || groups.length === 0 || config.log.mode === "off") return;
+    const plateAt = (index: number) => isPlateShot(judged[index], described[index]?.signText, config.thresholds);
+    const stageScore = (index: number, stage: "before" | "after") => {
+      const judgment = judged[index];
+      return judgment?.stage === stage ? (judgment.stageProbabilities?.[stage] ?? 0) : 0;
+    };
+    const picks = pickPhotos(groups, plateAt, stageScore);
+    const byId = new Map(groups.map((group) => [group.id, group]));
+    const spots: SavedSpot[] = picks.map((pick) => {
+      const group = byId.get(pick.groupId);
+      return {
+        address: group?.address ?? "",
+        lane: group?.lane ?? "unknown",
+        work: group?.work?.trim() ?? "",
+        time: group?.time ?? "",
+        shade: group?.shade,
+        pair: pick.pair,
+        before: pick.before !== null,
+        after: pick.after !== null,
+      };
+    });
+    const timer = setTimeout(() => {
+      saveDay({
+        date,
+        savedAt: new Date().toISOString(),
+        photos: photos.length,
+        groups: groups.length,
+        report: reportText,
+        dong: dongLabel ?? config.dong,
+        spots,
+        undecided: groups.filter((group) => group.lane === "unknown").length,
+      });
+      setLogVersion((n) => n + 1);
+    }, 400);
+
+    const signature = `${date}|${picks.map((pick) => `${pick.before ?? ""}/${pick.after ?? ""}`).join(",")}`;
+    let cancelled = false;
+    if (signature !== savedShots.current) {
+      savedShots.current = signature;
+      void (async () => {
+        const shot = (index: number | null) =>
+          index === null ? Promise.resolve(null) : cellPhotoBytes(photoByIndex[index]?.url, PHOTO_RATIO, 720);
+        const items = await Promise.all(picks.map(async (pick) => ({ before: await shot(pick.before), after: await shot(pick.after) })));
+        if (!cancelled) await savePhotos({ date, items });
+      })();
+    }
+    return () => {
+      clearTimeout(timer);
+      cancelled = true;
+    };
+  }, [phase, groups, judged, described, photos.length, photoByIndex, config.log.mode, config.dong, config.thresholds, date, dongLabel, reportText]);
 
   // ── 사람이 고치는 자리 ────────────────────────────────
 
@@ -655,6 +733,61 @@ export default function PatrolApp({
         return next;
       }),
     );
+  };
+
+  /**
+   * 사진 옮기기. 한 자리에서 몇 장을 골라 다른 자리(연번)로 보내거나 새 자리로 뗀다.
+   * 「위와 합치기」는 이웃끼리만 된다. 시각이 잘못 읽혀 멀리 떨어진 장은 이 길로 제자리에 넣는다.
+   */
+  const [moving, setMoving] = useState<{ from: string; picked: number[] } | null>(null);
+  const startMove = (id: string) => setMoving({ from: id, picked: [] });
+  const togglePick = (index: number) =>
+    setMoving((m) => (m ? { ...m, picked: m.picked.includes(index) ? m.picked.filter((i) => i !== index) : [...m.picked, index] } : m));
+  const moveTo = (targetId: string | null) => {
+    if (!moving || moving.picked.length === 0) return;
+    const { from, picked } = moving;
+    setMoving(null);
+    setEdits((n) => n + 1);
+    setGroups((current) => {
+      const at = current.findIndex((g) => g.id === from);
+      if (at < 0) return current;
+      // 화면에 줄 선 차례(시각순)로 다시 정렬한다. 옮겨 온 장이 뒤에 붙는 것이 아니라 제 시각 자리에 든다.
+      const order = new Map(photos.map((p, i) => [p.index, i]));
+      const lineUpIndices = (list: number[]) => [...list].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+      const timeOf = (list: number[]) => list.map((i) => photoByIndex[i]?.time).filter(Boolean).sort()[0] ?? "";
+      const rest = current[at].photos.filter((i) => !picked.includes(i));
+      let next = current.map((g) => (g.id === from ? { ...g, photos: rest, edited: true, time: timeOf(rest) || g.time } : g));
+      if (targetId === null) {
+        const byIndex = new Map(Object.values(judged).map((j) => [j.index, j]));
+        const lane: LaneOrUnknown = mode === "manual" ? "unknown" : decideLane(picked, byIndex, config.thresholds);
+        const plate = picked.find((i) => isPlate(byIndex.get(i), described[i]?.signText, config.thresholds));
+        const fresh: Group = {
+          id: `${from}m${picked.join("_")}`,
+          photos: lineUpIndices(picked),
+          address: plate !== undefined ? (described[plate]?.signText ?? "") : "",
+          lane,
+          edited: true,
+          time: timeOf(picked),
+        };
+        next.splice(at + 1, 0, fresh);
+      } else {
+        next = next.map((g) => {
+          if (g.id !== targetId) return g;
+          const merged = lineUpIndices([...g.photos, ...picked]);
+          return { ...g, photos: merged, edited: true, time: timeOf(merged) || g.time };
+        });
+      }
+      return next.filter((g) => g.photos.length > 0);
+    });
+  };
+
+  /**
+   * 자리 지우기(09-26 사용자). 목록에서 빼기만 한다. 사진은 `photos` 에 남아 화면 수는 그대로이고, 어느 자리에도 안 들어가니
+   * 일지·한글 파일에는 안 실린다. 회차 대조(run-diff)에서는 「빠진 사진」 줄로 드러난다. 되돌리기는 없다. 단추가 두 번 눌러야 지운다.
+   */
+  const removeGroup = (id: string) => {
+    setEdits((n) => n + 1);
+    setGroups((current) => current.filter((g) => g.id !== id));
   };
 
   const mergeUp = (id: string) => {
@@ -698,12 +831,16 @@ export default function PatrolApp({
       const byIndex = new Map(Object.values(judged).map((j) => [j.index, j]));
       const head = group.photos.slice(0, cut);
       const tail = group.photos.slice(cut);
+      // 주소는 주소판이 든 쪽이 가져간다. 둘 다 없으면(사람이 친 주소) 앞쪽. 전에는 두 쪽 다 비웠는데,
+      // 그러면 나눈 뒤 이웃과 합칠 때 읽어 둔 주소가 사라졌다(실물 30장 정답 회차에서 두 자리가 그렇게 비었다).
+      const hasPlate = (list: number[]) => list.some((i) => isPlate(byIndex.get(i), described[i]?.signText, config.thresholds));
+      const addressGoesToHead = hasPlate(head) || !hasPlate(tail);
       const make = (photos: number[], suffix: string): Group => {
         const lane = decideLane(photos, byIndex, config.thresholds);
         const half: Group = {
           id: `${group.id}${suffix}`,
           photos,
-          address: "",
+          address: (suffix === "a") === addressGoesToHead ? group.address : "",
           lane,
           edited: true,
           time: photos.map((i) => photoByIndex[i]?.time).filter(Boolean).sort()[0] ?? "",
@@ -792,8 +929,16 @@ export default function PatrolApp({
           </button>
 
           {calendarOpen && (
-            <div className="mt-3">
+            <div className="mt-3 space-y-3">
               <DayCalendar days={days} picked={pickedDay} onPick={setPickedDay} />
+              <PeriodReport
+                days={days}
+                dong={dongLabel ?? config.dong}
+                unit={config.unit}
+                officer={config.officer}
+                weekForm={weeklyFormOf}
+                onChanged={() => setLogVersion((n) => n + 1)}
+              />
             </div>
           )}
         </section>
@@ -804,6 +949,13 @@ export default function PatrolApp({
           record={pastRecord}
           onCopy={() => {
             navigator.clipboard?.writeText(pastRecord.report).catch(() => undefined);
+          }}
+          onDelete={() => {
+            // 잘못 만든 날을 담당자가 지운다. 글·자리 목록(localStorage)과 사진 사본(IndexedDB) 둘 다. 이 기기 안의 일이다.
+            removeDay(pastRecord.date);
+            void deletePhotos(pastRecord.date);
+            setPickedDay(null);
+            setLogVersion((n) => n + 1);
           }}
         />
       )}
@@ -899,6 +1051,11 @@ export default function PatrolApp({
                   onLane={(lane: LaneOrUnknown) => touch(group.id, (g) => ({ ...g, lane }))}
                   onMergeUp={() => mergeUp(group.id)}
                   onSplitAt={(photoIndex) => splitAt(group.id, photoIndex)}
+                  moving={moving}
+                  onMoveStart={() => startMove(group.id)}
+                  onMovePick={togglePick}
+                  onMoveHere={() => moveTo(group.id)}
+                  onRemove={() => removeGroup(group.id)}
                 />
               ))}
               <AddMore onFiles={take} busy={busy} />
@@ -928,10 +1085,39 @@ export default function PatrolApp({
                   defaultWork={defaultWorkOf(group, { ...DEFAULT_WORDING, ...wording })}
                   onMergeUp={() => mergeUp(group.id)}
                   onSplitAt={(photoIndex) => splitAt(group.id, photoIndex)}
+                  moving={moving}
+                  onMoveStart={() => startMove(group.id)}
+                  onMovePick={togglePick}
+                  onMoveHere={() => moveTo(group.id)}
+                  onRemove={() => removeGroup(group.id)}
                 />
               ))}
               <AddMore onFiles={take} busy={busy} />
             </section>
+          )}
+
+          {/* 옮기는 동안 바닥에 붙는 띠. 무엇을 골랐고 다음에 무엇을 누르는지. */}
+          {moving && stage === "field" && (
+            <div
+              className="fixed inset-x-0 bottom-0 z-40 flex flex-wrap items-center gap-2 px-4 py-3 text-[12px]"
+              style={{ background: "var(--paper)", borderTop: "1px solid var(--line)" }}
+            >
+              <span className="flex-1">
+                옮기기 · 사진 <b>{moving.picked.length}장</b> 선택. 원본 자리의 사진을 눌러 고르고, 옮겨 넣을 자리의 <b>「N번 여기로」</b>를 누르세요.
+              </span>
+              <button
+                type="button"
+                onClick={() => moveTo(null)}
+                disabled={moving.picked.length === 0}
+                className="rounded-md px-3 py-1.5"
+                style={{ border: "1px solid var(--line)", opacity: moving.picked.length === 0 ? 0.5 : 1 }}
+              >
+                새 자리로
+              </button>
+              <button type="button" onClick={() => setMoving(null)} className="rounded-md px-3 py-1.5" style={{ border: "1px solid var(--line)" }}>
+                취소
+              </button>
+            </div>
           )}
 
           {stage === "report" && (
@@ -1313,14 +1499,41 @@ function passHeader(pass: string | null): Record<string, string> {
   return pass ? { "x-patrol-pass": pass } : {};
 }
 
+/**
+ * 서버에 묻는다. 실패하면 **까닭이 든 오류**를 던진다. 화면은 그 말을 그대로 띄운다.
+ *   · 브라우저가 서버에 못 닿음(인터넷 끊김) → 그렇다고 적는다.
+ *   · 서버가 JSON 아닌 것을 돌려줌(앞단 502·재시작 중) → 서버가 응답하지 않는다고 적는다.
+ *   · 서버가 error 를 적어 보냄(키·잔액·한도·연결) → 그 말을 그대로.
+ */
 async function post<T>(url: string, body: unknown, pass: string | null = null): Promise<T> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json", ...passHeader(pass) },
-    body: JSON.stringify(body),
-  });
-  const payload = (await response.json()) as T & { error?: string };
-  if (!response.ok) throw new Error(payload.error ?? `요청이 실패했습니다 (${response.status})`);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...passHeader(pass) },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new Error(
+      navigator.onLine === false
+        ? "인터넷 연결이 끊겼습니다. 연결을 확인하고 다시 해 주세요. 올린 사진은 그대로 있습니다."
+        : "서버에 닿지 못했습니다. 잠시 뒤에 다시 해 주세요. 올린 사진은 그대로 있습니다.",
+    );
+  }
+  let payload: (T & { error?: string }) | null = null;
+  try {
+    payload = (await response.json()) as T & { error?: string };
+  } catch {
+    payload = null;
+  }
+  if (!response.ok || payload === null) {
+    if (payload?.error) throw new Error(payload.error);
+    if (response.status === 502 || response.status === 503 || response.status === 504) {
+      throw new Error(`서버가 응답하지 않습니다(${response.status}). 다시 띄우는 중일 수 있습니다. 1분쯤 뒤에 다시 해 주세요.`);
+    }
+    if (response.status === 413) throw new Error("사진 한 장이 너무 큽니다(413). 사진을 줄여서 다시 올려 주세요.");
+    throw new Error(`요청이 실패했습니다(${response.status}). 잠시 뒤에 다시 해 주세요.`);
+  }
   return payload;
 }
 
@@ -1430,6 +1643,16 @@ function defaultWorkOf(group: Pick<Group, "lane" | "shade">, say: Wording): stri
  */
 
 /**
+ * 읽은 주소판 가운데 고른 동의 도로명 색인에 **없는** 도로가 있는 쪽이 더 많은가.
+ * 한 장은 오독일 수 있으니 둘 이상일 때만. 색인이 없거나 도로명을 못 짚은 장은 세지 않는다.
+ */
+function dongMismatch(items: Described[]): { read: number; unknown: number } | null {
+  const read = items.filter((one) => one.roadKnown === true || one.roadKnown === false).length;
+  const unknown = items.filter((one) => one.roadKnown === false).length;
+  return unknown >= 2 && unknown * 2 > read ? { read, unknown } : null;
+}
+
+/**
  * 못 연 사진을 사람 말로. **이름을 적는다**. 「2장 실패」만으로는 어느 것인지 알 수 없어
  * 다시 올려 볼 수도, 빼고 갈 수도 없다.
  */
@@ -1448,7 +1671,9 @@ function untimedToast(photos: PreparedPhoto[]): string | null {
   const untimed = photos.filter((photo) => photo.timeFrom === null).length;
   if (untimed === 0) return null;
   // 까닭(EXIF 자리·XMP·지문)은 photo.probe 에 남아 있다. 화면에는 안 적는다. 사람이 읽을 말이 아니다.
-  return `${photos.length}장 가운데 ${untimed}장은 찍힌 시각을 읽지 못해 올라온 차례로 묶었습니다(점선 테두리).`;
+  // 이 시점은 파일 기록만 본 것이다. 사진에 찍힌 시각 글자는 사진→글 뒤에 읽으므로 「못 읽었다」고 단정하지 않는다.
+  // 09-26 실물: 78장 전부 파일 기록이 없었지만 63장은 찍힌 글자로 시각을 되찾았는데, 이 문구가 「78장 못 읽음」이라고 적었다.
+  return `${photos.length}장 가운데 ${untimed}장은 파일에 시각 기록이 없습니다. 사진에 찍힌 시각 글자가 있으면 다음 단계에서 읽고, 없으면 올라온 차례로 묶습니다(점선 테두리).`;
 }
 
 /** 아래에 잠깐 떴다가 사라지는 알림. 누르면 바로 닫힌다. */

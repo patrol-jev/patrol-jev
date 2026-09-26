@@ -7,7 +7,7 @@
   "roads": [],
   "seasonalSpots": [],
   "thresholds": {
-    "lane": 0.8,
+    "lane": 0.6,
     "sameLocation": 0.5,
     "addressPlate": 0.7,
     "sameMinutes": 2,

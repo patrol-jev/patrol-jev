@@ -17,6 +17,8 @@ export interface ShotStamp {
   time: string;
   /** 자정부터의 분. 날짜가 다르면 이 값만으로 빼면 안 된다. */
   minutes: number;
+  /** 이 장에는 시각이 없어 올라온 차례의 옆 장 시각을 빌렸다(`borrowStamps`). 화면이 그렇다고 적는다. */
+  borrowed?: boolean;
 }
 
 /**

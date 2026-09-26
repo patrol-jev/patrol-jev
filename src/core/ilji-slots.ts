@@ -113,6 +113,8 @@ function dedent(line: string): string {
 }
 
 export interface PhotoPick {
+  /** 어느 묶음의 것인가. 하루치 기록에 자리를 남길 때 묶음과 짝을 맞춘다. */
+  groupId: string;
   /** 정비 전 사진 index. 없으면 null. */
   before: number | null;
   /** 정비 후 사진 index. 없으면 null. */
@@ -149,14 +151,15 @@ export function pickPhotos(
     const note = laneLabel(group.lane);
     const pair = group.lane === "waste_cleanup";
 
+    const groupId = group.id;
     if (!pair) {
-      picks.push({ before: pool[0], after: pool[1] ?? null, caption, note, pair });
+      picks.push({ groupId, before: pool[0], after: pool[1] ?? null, caption, note, pair });
       continue;
     }
     if (pool.length === 1) {
       const only = pool[0];
       const isBefore = stageScore(only, "before") > stageScore(only, "after");
-      picks.push({ before: isBefore ? only : null, after: isBefore ? null : only, caption, note, pair });
+      picks.push({ groupId, before: isBefore ? only : null, after: isBefore ? null : only, caption, note, pair });
       continue;
     }
 
@@ -178,7 +181,7 @@ export function pickPhotos(
     // 판정이 없거나 한쪽만 섰으면 차례로 메운다. 전이 먼저, 후가 나중이다.
     if (before === null) before = pool.find((index) => index !== after) ?? null;
     if (after === null) after = [...pool].reverse().find((index) => index !== before) ?? null;
-    picks.push({ before, after, caption, note, pair });
+    picks.push({ groupId, before, after, caption, note, pair });
   }
   return picks;
 }

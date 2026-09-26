@@ -39,6 +39,11 @@ export interface AddressReading {
    * null = 판정할 수 없었다(색인 없음 · 도로명을 못 짚음 · 번호를 못 읽음).
    */
   exists: boolean | null;
+  /**
+   * 읽은 도로명이 고른 동의 색인에 있는가(고친 뒤 기준). null = 색인이 없거나 도로명을 못 짚었다.
+   * false 가 여러 장이면 사진이 다른 동 것일 가능성이 크다. 화면이 그때 「우리 동」을 다시 보라고 알린다.
+   */
+  known: boolean | null;
 }
 
 /** 고칠 때 허용하는 글자 차이. 이보다 멀면 다른 도로로 본다. */
@@ -58,6 +63,7 @@ export function readAddress(raw: string, index: RoadIndex | null): AddressReadin
     building: null,
     correction: null,
     exists: null,
+    known: null,
   };
   if (cleaned.length === 0) return base;
 
@@ -86,6 +92,7 @@ export function readAddress(raw: string, index: RoadIndex | null): AddressReadin
 
   base.road = road;
   base.text = joinAddress(road, parsed.building);
+  base.known = Object.prototype.hasOwnProperty.call(index.buildings, road);
 
   // ③ 번호가 그 도로에 있는지. 고치지는 않는다.
   if (parsed.building && Object.prototype.hasOwnProperty.call(index.buildings, road)) {

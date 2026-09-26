@@ -10,3 +10,10 @@ export function ReportExtras(props: { collect: (ratio: number) => Promise<IljiSl
   void props;
   return null;
 }
+
+/**
+ * 주간 일지를 다른 양식으로 채우는 자리. 이 레포에는 없어서 null 이고, 주간 일지는 기본 양식으로 나간다.
+ */
+export function weeklyFormOf(): { name: string; photoRatio: number; build: (days: IljiSlots[]) => { bytes: Uint8Array; note: string } } | null {
+  return null;
+}

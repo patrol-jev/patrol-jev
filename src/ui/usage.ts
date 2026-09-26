@@ -1,5 +1,6 @@
 "use client";
 
+import type { SavedSpot } from "@/core/period";
 import type { UsageRecord } from "@/core/types";
 
 /**
@@ -170,7 +171,10 @@ export function recallLane(address: string, learned: LearnedLanes): string | nul
   return key.length > 0 ? (learned[key] ?? null) : null;
 }
 
-/** 하루치 기록. 사진은 담지 않는다(용량도 크고, 남길 이유도 없다). */
+/**
+ * 하루치 기록. 글과 자리 목록이다. 사진은 여기 담지 않는다(localStorage 는 몇 MB 가 한계다).
+ * 일지에 실린 사진의 작은 사본은 `photo-store.ts`(IndexedDB)에 같은 날짜로 따로 남는다.
+ */
 export interface DayRecord {
   /** YYYY-MM-DD */
   date: string;
@@ -180,6 +184,10 @@ export interface DayRecord {
   /** 그날 만든 일지 글 전체. 복사해 쓰라고 그대로 둔다. */
   report: string;
   dong: string;
+  /** 일지에 실린 자리들(란 · 주소 · 말). 기간 보고서가 이것을 센다. 이 칸이 생기기 전 기록에는 없다. */
+  spots?: SavedSpot[];
+  /** 갈래를 못 정해 일지에 안 실린 자리 수. */
+  undecided?: number;
 }
 
 export function readDays(): DayRecord[] {

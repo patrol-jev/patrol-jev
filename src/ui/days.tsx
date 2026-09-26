@@ -107,7 +107,9 @@ export function DayCalendar({
 }
 
 /** 지난 날짜의 일지. 읽기만 한다. 그날 사진은 남아 있지 않다. */
-export function PastDay({ record, onCopy }: { record: DayRecord; onCopy: () => void }) {
+export function PastDay({ record, onCopy, onDelete }: { record: DayRecord; onCopy: () => void; onDelete: () => void }) {
+  // 지우기는 두 번 누른다. 창(confirm)을 띄우지 않고 단추 글자가 바뀐다. 잘못 눌러도 한 번으로는 안 지워진다.
+  const [arming, setArming] = useState(false);
   return (
     <section className="space-y-2 rounded-xl p-3" style={{ border: "1px solid var(--line)" }}>
       <header className="flex flex-wrap items-center gap-2">
@@ -122,6 +124,23 @@ export function PastDay({ record, onCopy }: { record: DayRecord; onCopy: () => v
           style={{ background: "var(--wash)", border: "1px solid var(--line)", color: "var(--ink)" }}
         >
           복사
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (!arming) {
+              setArming(true);
+              return;
+            }
+            setArming(false);
+            onDelete();
+          }}
+          onBlur={() => setArming(false)}
+          className="rounded px-2 py-1 text-[12px]"
+          style={arming ? { background: "var(--ink)", color: "var(--paper)" } : { background: "var(--wash)", border: "1px solid var(--line)", color: "var(--muted)" }}
+          title="이 날의 일지 글·자리 목록·사진 사본을 이 기기에서 지웁니다"
+        >
+          {arming ? "한 번 더 누르면 지웁니다" : "이 날 지우기"}
         </button>
       </header>
 

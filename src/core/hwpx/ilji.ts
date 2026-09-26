@@ -1,7 +1,10 @@
 import type { IljiSlots } from "../ilji-slots";
 import { buildHeader, CHAR, Fills, PARA } from "./head";
 import { packHwpx, type Binary } from "./package";
+import { PHOTO_RATIO, photoGap, photoTable } from "./photos";
 import { buildSection, paragraph, table, type Cell } from "./section";
+
+export { PHOTO_RATIO };
 
 /**
  * 기본 양식. 「현장 순찰 일지」.
@@ -12,6 +15,10 @@ import { buildSection, paragraph, table, type Cell } from "./section";
  *         본문 칸 높이는 **글 줄 수로 먼저 잡고**(줄이 넘쳐 칸이 자라 다음 쪽으로 밀리지 않게) 남는 높이를 무게대로 나눠
  *         첫 쪽이 꽉 차게 한다. 글이 한 쪽 몫을 넘으면 그때만 다음 쪽으로 이어진다.
  *   2쪽~  현장 사진. 자리마다 표 하나. 순찰사항은 정비 전 | 정비 후, 나머지 란은 「현장 확인」 한두 장.
+ *
+ * **주간**(`buildWeeklyIljiHwpx`)은 그 주의 하루치들을 날짜 차례로 이어 붙인다. 날마다 띠 · 1쪽 · 사진 1쪽이고
+ * 띠 오른쪽에 「9월 3주차 · 1/5」 처럼 몇째 날인지 적는다. 사진 쪽은 **한 쪽만**(표 셋 = 여섯 장). 기재가 없는 날은
+ * 빈 셋을 넣지 않는다. 없는 순찰을 적으면 일지가 거짓이 된다.
  *
  * 어느 기관의 양식도 베끼지 않았다. 담기는 값은 슬롯 여덟과 사진뿐이라 어느 동이든 그대로 쓸 수 있고,
  * 본인 양식이 따로 있으면 그쪽에 채운다(부서 양식 브릿지). 상표·검증 표지는 넣지 않는다.
@@ -44,78 +51,65 @@ const CELL_PAD = 280 + 300;
 /** 본문 칸에서 글이 들어가는 너비. 표 너비에서 칸 여백과 문단 왼쪽 여백을 뺀 값. */
 const TEXT_WIDTH = TABLE_WIDTH - 280 - 100;
 
-const PHOTO_TABLE_WIDTH = 49040;
-const PHOTO_WIDTH = PHOTO_TABLE_WIDTH / 2;
-const PHOTO_HEIGHT = 15500;
-const HEAD_HEIGHT = 1700;
-const CAPTION_HEIGHT = 1600;
-
-/** 사진 칸의 가로/세로. 브라우저가 이 비율로 잘라 보낸다. 안 맞으면 셀에 늘려 붙어 찌그러진다. */
-export const PHOTO_RATIO = PHOTO_WIDTH / PHOTO_HEIGHT;
-
 const SECTION_FILL = "#DFE6F7";
 const LABEL_FILL = "#F2F2F2";
+
+/** 사진 쪽 한 장에 들어가는 표 수. 표 하나가 18800, 셋이면 사이 빈 줄까지 한 쪽에 든다. 넷은 넘친다. */
+export const PHOTO_TABLES_PER_PAGE = 3;
 
 let nextId = 0;
 
 export function buildIljiHwpx(slots: IljiSlots): Uint8Array {
+  return buildIlji([{ slots, tag: "" }], null);
+}
+
+export interface WeeklyDay {
+  slots: IljiSlots;
+  /** 띠 오른쪽에 적는 말. 「9월 3주차 · 1/5」. */
+  tag: string;
+}
+
+/** 주간. 날마다 새 쪽에서 시작하고 사진은 한 쪽(표 셋)까지만. */
+export function buildWeeklyIljiHwpx(days: WeeklyDay[], title: string): Uint8Array {
+  return buildIlji(days, title);
+}
+
+function buildIlji(days: WeeklyDay[], weeklyTitle: string | null): Uint8Array {
   nextId = 0;
   const fills = new Fills();
-  const dong = slots.dong.trim() || "○○동";
-  const unit = slots.unit.trim();
-  const blocks: string[] = [];
   const binaries: Binary[] = [];
+  const dong = days[0]?.slots.dong.trim() || "○○동";
 
-  blocks.push(strip(fills, `■ 현장 순찰 일지 · ${dong}`, ""));
-  blocks.push(page(fills, slots, dong, unit));
+  // 1쪽들을 먼저 다 짓는다. 테두리 벌은 여기서 전부 등록된다. 둘째 날부터 띠가 새 쪽에서 시작한다.
+  const pages = days.map((day, k) => ({
+    strip: strip(fills, `■ 현장 순찰 일지 · ${day.slots.dong.trim() || "○○동"}`, day.tag, k > 0),
+    page: page(fills, day.slots, day.slots.dong.trim() || "○○동", day.slots.unit.trim()),
+  }));
 
   // 사진 표가 쓰는 테두리를 먼저 등록해 둔다. 그림 채움은 등록된 벌 뒤에 붙으므로 그 뒤로는 새 벌이 없어야 한다.
   const thin = fills.id({ border: "thin" });
   const section = fills.id({ border: "thin", color: SECTION_FILL });
   const imageCount = fills.specs.length;
 
-  if (slots.photos.length > 0) {
-    blocks.push(paragraph({ text: "현장 사진", char: CHAR.heading, pageBreak: true }));
-    slots.photos.forEach((photo, i) => {
-      if (i > 0) blocks.push(paragraph({ text: "", char: CHAR.gap }));
-      const shots: Cell[] = [photo.before, photo.after].map((bytes, side) => {
-        let fill = thin;
-        if (bytes) {
-          const id = `img${binaries.length + 1}`;
-          binaries.push({ id, path: `BinData/${id}.jpg`, bytes });
-          fill = fills.imageId(binaries.length - 1);
-        }
-        return { row: 1, col: side, width: PHOTO_WIDTH, height: PHOTO_HEIGHT, lines: [], fill };
+  const blocks: string[] = [];
+  days.forEach((day, k) => {
+    blocks.push(pages[k].strip);
+    blocks.push(pages[k].page);
+    const photos = weeklyTitle === null ? day.slots.photos : day.slots.photos.slice(0, PHOTO_TABLES_PER_PAGE);
+    if (photos.length > 0) {
+      blocks.push(paragraph({ text: "현장 사진", char: CHAR.heading, pageBreak: true }));
+      photos.forEach((photo, i) => {
+        if (i > 0) blocks.push(photoGap());
+        const head = `□ ${photo.caption}${photo.note ? `   ·   ${photo.note}` : ""}`;
+        blocks.push(photoTable({ fills, binaries, thin, section, photo, head, id: tableId(), zOrder: nextId }));
       });
-      const head = `□ ${photo.caption}${photo.note ? `   ·   ${photo.note}` : ""}`;
-      const captions: Cell[] = photo.pair
-        ? ["정비 전", "정비 후"].map((text, side) => ({
-            row: 2, col: side, width: PHOTO_WIDTH, height: CAPTION_HEIGHT, lines: [text], char: CHAR.caption, para: PARA.center,
-          }))
-        : [{ row: 2, col: 0, colSpan: 2, width: PHOTO_TABLE_WIDTH, height: CAPTION_HEIGHT, lines: ["현장 확인"], char: CHAR.caption, para: PARA.center }];
-      blocks.push(
-        table({
-          id: tableId(),
-          zOrder: nextId,
-          rows: 3,
-          cols: 2,
-          width: PHOTO_TABLE_WIDTH,
-          height: HEAD_HEIGHT + PHOTO_HEIGHT + CAPTION_HEIGHT,
-          fill: thin,
-          body: [
-            [{ row: 0, col: 0, colSpan: 2, width: PHOTO_TABLE_WIDTH, height: HEAD_HEIGHT, lines: [head], fill: section, char: CHAR.section, para: PARA.cell }],
-            shots,
-            captions,
-          ],
-        }),
-      );
-    });
-  }
+    }
+  });
   if (fills.specs.length !== imageCount) throw new Error("사진 표가 새 테두리를 등록했다. 그림 채움 번호가 밀린다.");
 
   const header = buildHeader(fills, binaries.map((b) => b.id));
   const sectionXml = buildSection(blocks);
-  return packHwpx({ header, section: sectionXml, binaries, title: `${dong} 현장 순찰 일지` });
+  return packHwpx({ header, section: sectionXml, binaries, title: weeklyTitle ?? `${dong} 현장 순찰 일지` });
 }
 
 function tableId(): number {
@@ -123,8 +117,8 @@ function tableId(): number {
   return 1000000 + nextId;
 }
 
-/** 맨 위 띠. 왼쪽에 일지 이름. 선 없는 표 하나다. */
-function strip(fills: Fills, left: string, right: string): string {
+/** 맨 위 띠. 왼쪽에 일지 이름, 오른쪽에 (주간이면) 몇째 날. 선 없는 표 하나다. */
+function strip(fills: Fills, left: string, right: string, pageBreak: boolean): string {
   const blank = fills.id({ border: "none" });
   const half = TABLE_WIDTH / 2; // 24575
   return table({
@@ -135,6 +129,7 @@ function strip(fills: Fills, left: string, right: string): string {
     width: TABLE_WIDTH,
     height: STRIP_HEIGHT,
     fill: blank,
+    pageBreak,
     body: [[
       { row: 0, col: 0, width: half, height: STRIP_HEIGHT, lines: [left], fill: blank, char: CHAR.strip, para: PARA.left },
       { row: 0, col: 1, width: half, height: STRIP_HEIGHT, lines: [right], fill: blank, char: CHAR.strip, para: PARA.right },
@@ -202,16 +197,17 @@ function page(fills: Fills, slots: IljiSlots, dong: string, unit: string): strin
 /**
  * 이 줄들이 칸에서 몇 줄을 차지하나. 한글·전각은 글자 크기만큼, 영문·숫자는 그 반으로 어림한다.
  * 정확할 필요는 없다. 모자라게 잡는 쪽만 피하면 된다(그러면 칸이 자라 첫 쪽이 넘친다).
+ * `width` 를 주면 그 너비의 칸으로 센다(좁은 열).
  */
-export function estimateLines(lines: string[]): number {
+export function estimateLines(lines: string[], width = TEXT_WIDTH): number {
   let total = 0;
   for (const line of lines) {
-    let width = 0;
+    let w = 0;
     for (const ch of line) {
       const code = ch.codePointAt(0) ?? 0;
-      width += code < 0x2000 ? (ch === " " ? 400 : 650) : 1200;
+      w += code < 0x2000 ? (ch === " " ? 400 : 650) : 1200;
     }
-    total += Math.max(1, Math.ceil(width / TEXT_WIDTH));
+    total += Math.max(1, Math.ceil(w / Math.max(1, width)));
   }
   return total;
 }

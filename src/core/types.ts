@@ -17,6 +17,11 @@ export interface Described {
    * (색인 없음 · 도로명을 못 짚음 · 번호를 못 읽음).
    */
   signExists: boolean | null;
+  /**
+   * 읽은 도로명이 고른 동의 색인에 있는가. null = 대조할 수 없었다. 이 칸이 생기기 전 기록에는 없다.
+   * false 가 여럿이면 「우리 동」을 잘못 골랐을 가능성이 크다.
+   */
+  roadKnown?: boolean | null;
   ms: number;
   inputTokens: number;
   outputTokens: number;

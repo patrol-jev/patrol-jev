@@ -31,6 +31,11 @@ export function GroupCard({
   defaultWork,
   onMergeUp,
   onSplitAt,
+  moving,
+  onMoveStart,
+  onMovePick,
+  onMoveHere,
+  onRemove,
 }: {
   group: Group;
   order: number;
@@ -49,8 +54,18 @@ export function GroupCard({
   defaultWork: string;
   onMergeUp: () => void;
   onSplitAt: (photoIndex: number) => void;
+  /** 사진 옮기기 중인가. 어느 자리에서 어느 장을 골랐나. 아니면 null. */
+  moving: { from: string; picked: number[] } | null;
+  onMoveStart: () => void;
+  onMovePick: (photoIndex: number) => void;
+  onMoveHere: () => void;
+  /** 이 자리를 목록에서 뺀다. 사진은 남되 어느 자리에도 안 들어가고, 일지에도 안 실린다. */
+  onRemove: () => void;
 }) {
   const byIndex = new Map(Object.values(judged).map((j) => [j.index, j]));
+  // 지우기는 두 번 누른다(지난 날짜 지우기와 같은 결). 창을 띄우지 않고 단추 글자가 바뀐다.
+  const [arming, setArming] = useState(false);
+  const movingFromHere = moving?.from === group.id;
   // 막대는 이 묶음의 갈래를 정한 그 한 장의 분포다. 평균이 아니라 실제로 정한 값이다.
   const deciding = decidingJudgment(group.photos, byIndex, thresholds);
   // 기계 혼자였으면 무엇으로 봤을지. 사람이 고쳐 둔 자리에서 그 값을 나란히 보인다.
@@ -115,13 +130,55 @@ export function GroupCard({
           </span>
         )}
 
-        {!isFirst && (
+        {/* 떨어진 자리끼리는 「위와 합치기」로 못 잇는다. 사진을 골라 다른 연번으로 보내는 길이 따로 있다. */}
+        {moving === null && (
+          <button
+            onClick={onMoveStart}
+            className="rounded-md px-2 py-1 text-[11px] text-[var(--muted)] hover:text-[var(--ink)]"
+            style={{ border: "1px solid var(--line)" }}
+          >
+            사진 옮기기
+          </button>
+        )}
+        {moving !== null && movingFromHere && (
+          <span className="text-[11px] text-[var(--muted)]">옮길 사진을 누르세요 · {moving.picked.length}장</span>
+        )}
+        {moving !== null && !movingFromHere && (
+          <button
+            onClick={onMoveHere}
+            disabled={moving.picked.length === 0}
+            className="rounded-md px-2.5 py-1 text-[11px] font-medium"
+            style={{ background: "var(--ink)", color: "var(--paper)", opacity: moving.picked.length === 0 ? 0.5 : 1 }}
+          >
+            {order}번 여기로
+          </button>
+        )}
+        {!isFirst && moving === null && (
           <button
             onClick={onMergeUp}
             className="rounded-md px-2 py-1 text-[11px] text-[var(--muted)] hover:text-[var(--ink)]"
             style={{ border: "1px solid var(--line)" }}
           >
             위와 합치기
+          </button>
+        )}
+        {moving === null && (
+          <button
+            type="button"
+            onClick={() => {
+              if (!arming) {
+                setArming(true);
+                return;
+              }
+              setArming(false);
+              onRemove();
+            }}
+            onBlur={() => setArming(false)}
+            className="rounded-md px-2 py-1 text-[11px]"
+            style={arming ? { background: "var(--ink)", color: "var(--paper)" } : { border: "1px solid var(--line)", color: "var(--muted)" }}
+            title="이 자리를 목록에서 뺍니다. 사진은 남지만 일지에는 안 실립니다. 연번은 하나씩 당겨집니다."
+          >
+            {arming ? "한 번 더 누르면 지웁니다" : "이 자리 지우기"}
           </button>
         )}
       </header>
@@ -153,7 +210,12 @@ export function GroupCard({
 
       <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1">
         {photos.map((photo) => (
-          <Thumb key={photo.index} photo={photo} onOpen={() => setZoom(photo.url)} />
+          <Thumb
+            key={photo.index}
+            photo={photo}
+            onOpen={() => (movingFromHere ? onMovePick(photo.index) : setZoom(photo.url))}
+            picked={movingFromHere ? moving!.picked.includes(photo.index) : undefined}
+          />
         ))}
       </div>
 
