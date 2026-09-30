@@ -1,0 +1,16 @@
+{
+  "name": "초과기록",
+  "short_name": "초과기록",
+  "description": "오늘 초과 시간을 넣으면 인사랑에서 누를 칸과 쓸 사유가 나옵니다.",
+  "start_url": "/overtime",
+  "scope": "/overtime",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "lang": "ko",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
