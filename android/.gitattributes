@@ -1,0 +1,4 @@
+# 윈도우 배치 파일은 줄 끝이 CRLF 여야 한다. 저장소 기본값(LF)에서 뺀다.
+*.bat text eol=crlf
+*.jar binary
+*.png binary

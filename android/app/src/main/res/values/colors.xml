@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 웹 화면의 바탕과 같은 값(src/app/globals.css 의 paper). -->
+    <color name="barColor">#FFFFFFFF</color>
+    <color name="barColorDark">#FF0B0B0D</color>
+    <!-- 여는 화면. 표식이 흰 판 위에 있어서 밤에도 흰 바탕으로 둔다. -->
+    <color name="splashColor">#FFFFFFFF</color>
+</resources>

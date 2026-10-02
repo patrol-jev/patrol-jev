@@ -1,0 +1,33 @@
+name: Android
+
+# 밀 때 빌드만 본다. 비밀값을 쓰지 않는다.
+# 서명한 묶음(aab)은 각자 자기 컴퓨터에서 짓는다(docs/android.md).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build debug apk and unsigned release bundle
+        run: bash ./gradlew assembleDebug bundleRelease --no-daemon

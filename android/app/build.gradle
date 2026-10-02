@@ -1,0 +1,56 @@
+plugins {
+    id 'com.android.application'
+}
+
+// 서명에 쓰는 값은 이 저장소에 두지 않는다.
+// 같은 폴더의 keystore.properties(.gitignore 가 막는다)나 환경변수에서 읽고, 둘 다 없으면 서명 없이 짓는다.
+def keystoreFile = rootProject.file('keystore.properties')
+def keystore = new Properties()
+if (keystoreFile.exists()) {
+    keystoreFile.withInputStream { keystore.load(it) }
+}
+def signingValue = { String name -> keystore.getProperty(name) ?: System.getenv("PATROL_${name.toUpperCase()}") }
+def hasSigning = signingValue('storeFile') != null
+
+android {
+    namespace 'kr.ai.patrol'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "kr.ai.patrol"
+        minSdk 23
+        targetSdk 36
+        versionCode 1
+        versionName "1.0.0"
+    }
+
+    signingConfigs {
+        release {
+            if (hasSigning) {
+                storeFile rootProject.file(signingValue('storeFile'))
+                storePassword signingValue('storePassword')
+                keyAlias signingValue('keyAlias')
+                keyPassword signingValue('keyPassword')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (hasSigning) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // 웹 화면을 주소창 없이 여는 틀(Trusted Web Activity). 앱 코드는 따로 없다.
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.6.2'
+}

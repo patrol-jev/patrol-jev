@@ -1,0 +1,15 @@
+# 빌드 산출물
+.gradle/
+build/
+app/build/
+local.properties
+*.apk
+*.aab
+.idea/
+*.iml
+captures/
+
+# 서명에 쓰는 것은 어떤 것도 이 저장소에 두지 않는다
+keystore.properties
+*.keystore
+*.jks

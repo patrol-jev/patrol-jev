@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">순찰일지</string>
+
+    <!-- 본인 사이트로 올리려면 아래 셋과 app/build.gradle 의 applicationId 를 바꾼다. -->
+    <string name="hostName">patrol.ai.kr</string>
+    <string name="launchUrl">https://patrol.ai.kr/</string>
+    <string name="assetStatements">[{\"relation\": [\"delegate_permission/common.handle_all_urls\"], \"target\": {\"namespace\": \"web\", \"site\": \"https://patrol.ai.kr\"}}]</string>
+
+    <string name="providerAuthority">kr.ai.patrol.fileprovider</string>
+    <!-- 크롬이 없거나 낡은 기기에서는 주소창이 있는 탭으로 연다. -->
+    <string name="fallbackType">customtabs</string>
+</resources>
