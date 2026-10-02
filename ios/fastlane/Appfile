@@ -1,0 +1,2 @@
+app_identifier("kr.ai.patrol")
+team_id(ENV["APPLE_TEAM_ID"])

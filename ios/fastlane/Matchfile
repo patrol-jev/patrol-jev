@@ -1,0 +1,6 @@
+# 인증서 저장소 주소는 환경변수로만 받는다. 이 파일에 적지 않는다.
+git_url(ENV["MATCH_GIT_URL"])
+storage_mode("git")
+type("appstore")
+app_identifier(["kr.ai.patrol", "kr.ai.patrol.widget"])
+team_id(ENV["APPLE_TEAM_ID"])

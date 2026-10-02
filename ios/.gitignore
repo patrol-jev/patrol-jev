@@ -1,0 +1,29 @@
+# Xcode (프로젝트 파일은 project.yml 에서 만든다)
+*.xcodeproj/
+*.xcworkspace/
+build/
+DerivedData/
+xcuserdata/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+fastlane/README.md
+fastlane/api_key.json
+
+# Ruby
+vendor/
+.bundle/
+Gemfile.lock
+
+# 서명에 쓰는 것은 어떤 것도 이 저장소에 두지 않는다
+*.p8
+*.p12
+*.mobileprovision
+*.cer
+*.certSigningRequest

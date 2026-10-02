@@ -1,0 +1,102 @@
+default_platform(:ios)
+
+def app_ids
+  ["kr.ai.patrol", "kr.ai.patrol.widget"]
+end
+
+def asc_key
+  app_store_connect_api_key(
+    key_id: ENV["ASC_KEY_ID"],
+    issuer_id: ENV["ASC_ISSUER_ID"],
+    key_filepath: ENV["ASC_KEY_PATH"]
+  )
+end
+
+def keychain_args
+  is_ci ? { keychain_name: "ci_keychain", keychain_password: ENV["MATCH_PASSWORD"] } : {}
+end
+
+def archive_app
+  sh("cd .. && xcodegen generate")
+
+  build_app(
+    project: "Patrol.xcodeproj",
+    scheme: "Patrol",
+    export_method: "app-store",
+    output_directory: "./build",
+    output_name: "Patrol.ipa",
+    clean: true
+  )
+end
+
+platform :ios do
+  desc "Setup temporary keychain for CI"
+  lane :setup_keychain do
+    if is_ci
+      create_keychain(
+        name: "ci_keychain",
+        password: ENV["MATCH_PASSWORD"],
+        default_keychain: true,
+        unlock: true,
+        timeout: 3600,
+        lock_when_sleeps: false
+      )
+    end
+  end
+
+  desc "Teardown CI keychain"
+  lane :teardown_keychain do
+    if is_ci
+      delete_keychain(name: "ci_keychain") if File.exist?(File.expand_path("~/Library/Keychains/ci_keychain-db"))
+    end
+  end
+
+  desc "Sync certificates and provisioning profiles"
+  lane :sync_certs do
+    match(
+      type: "appstore",
+      api_key: asc_key,
+      app_identifier: app_ids,
+      readonly: is_ci,
+      **keychain_args
+    )
+  end
+
+  desc "Initialize certificates (first run only)"
+  lane :init_certs do
+    setup_keychain
+
+    match(
+      type: "appstore",
+      api_key: asc_key,
+      app_identifier: app_ids,
+      readonly: false,
+      force: true,
+      **keychain_args
+    )
+
+    teardown_keychain
+  end
+
+  desc "Build and upload to TestFlight"
+  lane :beta do
+    setup_keychain
+    sync_certs
+    archive_app
+
+    upload_to_testflight(
+      api_key: asc_key,
+      skip_waiting_for_build_processing: true
+    )
+
+    teardown_keychain
+  end
+
+  desc "Signed build only (CI validation)"
+  lane :build_only do
+    setup_keychain
+    sync_certs
+    archive_app
+    teardown_keychain
+  end
+end
