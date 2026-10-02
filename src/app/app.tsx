@@ -39,6 +39,7 @@ import { DayCalendar, PastDay } from "@/ui/days";
 import { cellPhotoBytes, downloadBytes } from "@/ui/hwpx-photo";
 import { PeriodReport } from "@/ui/period";
 import { deletePhotos, savePhotos } from "@/ui/photo-store";
+import { readManual, saveManual } from "@/ui/manual-pref";
 import type { SavedSpot } from "@/core/period";
 import { DongPicker, type DongChoice } from "@/ui/dong";
 import { ReportExtras, weeklyFormOf } from "@/ui/report-extras";
@@ -137,10 +138,18 @@ export default function PatrolApp({
    */
   const canRead = ready.vision && !(quota.limit > 0 && quota.left === 0);
   /**
-   * 지금 들어가는 길. 고르는 칸을 따로 두지 않는다.
-   * 사진을 읽을 수 있으면 읽고, 키가 없거나 오늘 몫을 다 썼으면 직접 적는다.
+   * 사람이 「수동」을 골랐나. 누르지 않았으면 이 브라우저가 기억해 둔 값이다(`ui/manual-pref.ts`).
+   * 사진을 밖으로 내보내면 안 되는 자리에서 쓰는 길이라 한 번 켜면 다음에도 켜져 있다.
    */
-  const mode: Mode = canRead ? "auto" : "manual";
+  const storedManual = useSyncExternalStore(subscribeNothing, readManual, onServer);
+  const [manualPick, setManualPick] = useState<boolean | null>(null);
+  const wantManual = manualPick ?? storedManual;
+  /**
+   * 지금 들어가는 길.
+   * 사진을 읽을 수 있고 사람이 수동을 고르지 않았으면 읽는다.
+   * 키가 없거나 오늘 몫을 다 썼거나 수동을 골랐으면 직접 적는다.
+   */
+  const mode: Mode = canRead && !wantManual ? "auto" : "manual";
   /** 사람이 고친 일지 글. 고치지 않았으면 null. */
   const [editedReport, setEditedReport] = useState<string | null>(null);
   /** 문구를 배우거나 지울 때마다 올린다. localStorage 가 바뀐 것을 리액트는 모른다. */
@@ -910,6 +919,10 @@ export default function PatrolApp({
             setPicked(name);
             writeDong(name);
           }}
+          onManual={(on) => {
+            setManualPick(on);
+            saveManual(on);
+          }}
         />
       )}
 
@@ -1256,6 +1269,7 @@ function Home({
   quotaSpent,
   dong,
   onDong,
+  onManual,
 }: {
   onFiles: (files: File[]) => void;
   busy: boolean;
@@ -1266,12 +1280,41 @@ function Home({
   quotaSpent: boolean;
   dong: string | null;
   onDong: (name: string | null, choice: DongChoice | null) => void;
+  /** 「수동」 단추를 눌렀을 때. 켜면 사진을 모델로 보내지 않는다. */
+  onManual: (on: boolean) => void;
 }) {
   const [over, setOver] = useState(false);
 
   return (
     <section className="space-y-3">
-      <DongPicker value={dong} onChange={onDong} disabled={busy} />
+      <DongPicker
+        value={dong}
+        onChange={onDong}
+        disabled={busy}
+        trailing={
+          // 입력칸과 같은 모양, 같은 색. 켜지면 글자만 진해진다.
+          // 키가 없거나 오늘 몫을 다 써서 수동인 때에는 끌 수 없다. 그때는 눌러도 읽을 수가 없다.
+          <button
+            type="button"
+            aria-pressed={mode === "manual"}
+            disabled={busy || !ready.vision || quotaSpent}
+            onClick={() => onManual(mode !== "manual")}
+            title={
+              mode === "manual"
+                ? "사진을 모델로 보내지 않고 직접 적는 중입니다."
+                : "누르면 사진을 모델로 보내지 않고 직접 적습니다."
+            }
+            className="shrink-0 rounded-md px-2 py-1 text-[12px]"
+            style={{
+              background: "var(--wash)",
+              border: "1px solid var(--line)",
+              color: mode === "manual" ? "var(--ink)" : "var(--muted)",
+            }}
+          >
+            {mode === "manual" ? "수동 모드" : "수동 전환"}
+          </button>
+        }
+      />
 
       {mode === "manual" && quotaSpent && (
         <p className="text-[11.5px] text-[var(--muted)]">

@@ -26,10 +26,13 @@ export interface DongChoice {
 const SHOWN = 8;
 
 export function DongPicker({
+  trailing,
   value,
   onChange,
   disabled,
 }: {
+  /** 입력칸 바로 옆에 놓을 것. 같은 줄, 같은 모양의 작은 단추 하나를 둔다. */
+  trailing?: React.ReactNode;
   value: string | null;
   onChange: (name: string | null, choice: DongChoice | null) => void;
   disabled?: boolean;
@@ -79,16 +82,24 @@ export function DongPicker({
   }, [dongs, typed]);
 
   if (dongs === null) {
-    return <p className="text-[11.5px] text-[var(--muted)]">동 목록을 읽는 중…</p>;
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-[11.5px] text-[var(--muted)]">동 목록을 읽는 중…</p>
+        {trailing}
+      </div>
+    );
   }
 
   if (dongs.length === 0) {
     return (
-      <p className="text-[11.5px] text-[var(--muted)]">
-        도로명 색인이 없습니다. 주소판에서 읽은 글자를 그대로 씁니다. 대조를 켜려면{" "}
-        <b className="text-[var(--ink)]">도로명주소 한글</b> 파일을 <code>road/</code> 에 두고{" "}
-        <code>npm run roads:build</code> 를 한 번 돌리세요.
-      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="min-w-0 flex-1 text-[11.5px] text-[var(--muted)]">
+          도로명 색인이 없습니다. 주소판에서 읽은 글자를 그대로 씁니다. 대조를 켜려면{" "}
+          <b className="text-[var(--ink)]">도로명주소 한글</b> 파일을 <code>road/</code> 에 두고{" "}
+          <code>npm run roads:build</code> 를 한 번 돌리세요.
+        </p>
+        {trailing}
+      </div>
     );
   }
 
@@ -129,6 +140,8 @@ export function DongPicker({
         className="min-w-0 flex-1 rounded-md px-2 py-1 text-[12px] sm:max-w-56"
         style={{ background: "var(--wash)", border: "1px solid var(--line)", color: "var(--ink)" }}
       />
+
+      {trailing}
 
       {chosen && !open && (
         <>
