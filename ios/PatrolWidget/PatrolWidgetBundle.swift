@@ -19,7 +19,7 @@ struct PatrolMonthWidget: Widget {
                 .containerBackground(.background, for: .widget)
         }
         .configurationDisplayName("이번 달 순찰일지")
-        .description("이번 달에 일지를 며칠 만들었는지, 오늘 만들었는지 봅니다.")
+        .description("이번 달에 일지를 며칠 만들었는지, 사진을 읽는 데 보통 몇 초가 걸렸는지 봅니다.")
         .supportedFamilies([.systemSmall, .systemMedium, .accessoryRectangular, .accessoryInline])
     }
 }
@@ -53,7 +53,8 @@ struct PatrolTimelineProvider: TimelineProvider {
     }
 
     private func current() -> PatrolEntry {
-        PatrolEntry(date: Date(), summary: PatrolSummary.of(SharedDataStore.shared.days))
+        let store = SharedDataStore.shared
+        return PatrolEntry(date: Date(), summary: PatrolSummary.of(store.days, stats: store.stats))
     }
 }
 
@@ -80,7 +81,7 @@ struct PatrolMonthView: View {
                 Text("순찰일지")
                     .font(.headline)
                 Text("이번 달 \(summary.monthDays)일 · 사진 \(summary.monthPhotos)장")
-                Text(lastLine)
+                Text(summary.stats?.medianLine ?? lastLine)
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -88,13 +89,24 @@ struct PatrolMonthView: View {
         case .systemMedium:
             HStack(alignment: .center, spacing: 20) {
                 count
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("사진 \(summary.monthPhotos)장")
                         .font(.system(size: 17, weight: .semibold))
+                    if let median = summary.stats?.medianLine {
+                        Text(median)
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                    if let total = summary.stats?.totalLine {
+                        Text(total)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                    }
                     Text(lastLine)
-                        .font(.system(size: 14))
+                        .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                 }
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 Spacer(minLength: 0)
             }
 
@@ -102,10 +114,17 @@ struct PatrolMonthView: View {
             VStack(alignment: .leading, spacing: 6) {
                 count
                 Spacer(minLength: 0)
+                if let median = summary.stats?.medianLine {
+                    Text(median)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
                 Text(lastLine)
-                    .font(.system(size: 13))
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }

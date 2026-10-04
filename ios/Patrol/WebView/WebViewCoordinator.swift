@@ -7,8 +7,8 @@ import WidgetKit
 /// 1. 파일 받기. 한글 파일, 묶음 파일, 그림은 화면 안에서 만들어 내려받게 되어 있는데
 ///    앱 안의 웹 화면은 그것을 저절로 받지 못한다. 받아서 공유 창으로 넘긴다.
 /// 2. 밖으로 나가는 주소는 사파리로 넘긴다. 이 앱은 한 사이트만 연다.
-/// 3. 위젯에 적을 숫자(날짜와 사진 장수)를 웹 화면의 기록에서 읽어 둔다.
-final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+/// 3. 위젯에 적을 숫자(날짜와 사진 장수, 회차의 장수와 걸린 시간)를 웹 화면의 기록에서 읽어 둔다.
+final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler {
     @Binding var isLoading: Bool
     @Binding var loadFailed: Bool
     weak var webView: WKWebView?
@@ -210,23 +210,88 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WK
 
     private struct RawDay: Decodable {
         let date: String
-        let photos: Int?
+        let photos: Int
     }
 
-    /// 웹 화면이 이 기기에 쌓아 둔 하루치 기록에서 날짜와 장수만 읽는다.
+    private struct RawRun: Decodable {
+        let photos: Int
+        let ms: Double
+        let manual: Bool
+    }
+
+    private struct RawSync: Decodable {
+        let days: [RawDay]
+        let runs: [RawRun]
+    }
+
+    /// 웹 화면이 두 기록 가운데 하나를 고칠 때마다 앱에 알리게 한다. 이것이 없으면 일지를 만든 뒤
+    /// 앱을 덮거나 다시 열 때까지 위젯이 옛 숫자에 머문다. 알리는 것은 「고쳤다」는 사실뿐이고 값은 싣지 않는다.
+    static var syncScript: WKUserScript {
+        let source = """
+        (function () {
+          var keys = ['\(Constants.daysKey)', '\(Constants.runsKey)'];
+          var tell = function (key) {
+            if (keys.indexOf(key) < 0) return;
+            try { window.webkit.messageHandlers.\(Constants.syncMessage).postMessage(1); } catch (e) {}
+          };
+          var set = Storage.prototype.setItem;
+          Storage.prototype.setItem = function (key) { set.apply(this, arguments); tell(key); };
+          var remove = Storage.prototype.removeItem;
+          Storage.prototype.removeItem = function (key) { remove.apply(this, arguments); tell(key); };
+        })();
+        """
+        return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+    }
+
+    private var pendingSync: DispatchWorkItem?
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == Constants.syncMessage else { return }
+        // 한 회차가 끝나면 두 기록이 잇달아 적힌다. 한 번만 읽는다.
+        pendingSync?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.syncDays() }
+        pendingSync = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    /// 웹 화면이 이 기기에 쌓아 둔 기록에서 숫자만 읽는다. 하루치 기록에서는 날짜와 장수, 회차 기록에서는
+    /// 장수와 걸린 시간과 직접 적었는지. 줄이는 일은 웹 화면 안에서 하므로 일지 글과 주소는 앱으로 건너오지 않는다.
+    /// 한 줄이 깨져 있어도 나머지는 읽는다.
     func syncDays() {
         guard let webView, let current = webView.url?.host, Constants.internalHosts.contains(current) else { return }
 
-        webView.evaluateJavaScript("localStorage.getItem('\(Constants.daysKey)')") { result, error in
-            guard error == nil else { return }
-            let raw = (result as? String) ?? "[]"
-            guard let data = raw.data(using: .utf8),
-                  let parsed = try? JSONDecoder().decode([RawDay].self, from: data) else { return }
+        let script = """
+        (function () {
+          var read = function (key) {
+            try { var list = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(list) ? list : []; }
+            catch (e) { return []; }
+          };
+          var whole = function (value) { var n = Math.round(Number(value)); return isFinite(n) && n > 0 ? n : 0; };
+          var days = read('\(Constants.daysKey)')
+            .filter(function (day) { return day && typeof day.date === 'string'; })
+            .slice(-120)
+            .map(function (day) { return { date: day.date, photos: whole(day.photos) }; });
+          var runs = read('\(Constants.runsKey)')
+            .filter(function (run) { return run && typeof run === 'object'; })
+            .map(function (run) {
+              return { photos: whole(run.photos), ms: whole(run.visionMs) + whole(run.firstPassMs), manual: run.mode === 'manual' };
+            });
+          return JSON.stringify({ days: days, runs: runs });
+        })()
+        """
 
-            let days = parsed.suffix(120).map { PatrolDay(date: $0.date, photos: $0.photos ?? 0) }
+        webView.evaluateJavaScript(script) { result, error in
+            guard error == nil, let raw = result as? String, let data = raw.data(using: .utf8),
+                  let parsed = try? JSONDecoder().decode(RawSync.self, from: data) else { return }
+
+            let days = parsed.days.map { PatrolDay(date: $0.date, photos: $0.photos) }
+            let stats = PatrolStats.of(parsed.runs.map {
+                PatrolStats.Run(photos: $0.photos, seconds: $0.ms / 1000, manual: $0.manual)
+            })
             let store = SharedDataStore.shared
-            if store.days != days {
+            if store.days != days || store.stats != stats {
                 store.days = days
+                store.stats = stats
                 WidgetCenter.shared.reloadAllTimelines()
             }
         }
