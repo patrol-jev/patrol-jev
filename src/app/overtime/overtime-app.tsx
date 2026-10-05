@@ -22,7 +22,7 @@ import {
   type Plan,
   type Range,
 } from "@/core/overtime/plan";
-import { newDeviceId, pushReady, subscribe, syncJobs, unsubscribe, type PushJob, type PushReady } from "./push-client";
+import { isNativeAlarm, newDeviceId, pushReady, subscribe, syncJobs, unsubscribe, type PushJob, type PushReady } from "./push-client";
 
 /**
  * 초과기록. 오늘 초과 시간을 넣으면 인사랑 「근무기록」에서 칸마다 할 일이 나온다.
@@ -167,6 +167,7 @@ function Board() {
   const [days, setDays] = useState<Record<string, DayNote>>(first.days);
   const [alarm, setAlarm] = useState<string | null>(first.alarm);
   const [ready] = useState<PushReady>(pushReady);
+  const [native] = useState(isNativeAlarm);
   const [alarmNote, setAlarmNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -294,7 +295,7 @@ function Board() {
         <div className="flex w-full flex-wrap gap-x-2 text-[10px] text-[var(--muted)]">
           <span>프로그램 · 모델 미사용</span>
           <span>· 넣은 값은 이 기기 밖으로 나가지 않습니다</span>
-          <span>(진동 알림을 켜면 울릴 시각만 서버에 맡깁니다)</span>
+          <span>{native ? "(앱 알림은 이 폰이 직접 울립니다. 서버에도 맡기지 않습니다)" : "(진동 알림을 켜면 울릴 시각만 서버에 맡깁니다)"}</span>
           <span className="inline-flex items-center gap-1">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/icon.svg" alt="" width={11} height={11} className="h-[11px] w-[11px] rounded-[2px]" />

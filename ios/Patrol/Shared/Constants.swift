@@ -16,4 +16,7 @@ enum Constants {
 
     /// 웹 화면이 위 두 기록을 고쳤을 때 앱에 알리는 통로 이름.
     static let syncMessage = "patrolSync"
+
+    /// 초과기록 화면이 울릴 목록을 앱에 넘기는 통로 이름. `src/app/overtime/push-client.ts` 와 같아야 한다.
+    static let alarmMessage = "patrolAlarm"
 }

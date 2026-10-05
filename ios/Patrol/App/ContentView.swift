@@ -31,5 +31,12 @@ struct ContentView: View {
             guard let host = url.host, Constants.internalHosts.contains(host), url.scheme == "https" else { return }
             incoming = url
         }
+        // 초과기록 알림을 누르면 그 화면으로.
+        .onReceive(NotificationCenter.default.publisher(for: AlarmCenter.openNotification)) { note in
+            if let url = note.object as? URL { incoming = url }
+        }
+        .onAppear {
+            if let url = AlarmCenter.shared.takePendingOpen() { incoming = url }
+        }
     }
 }

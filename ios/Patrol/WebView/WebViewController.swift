@@ -44,6 +44,8 @@ final class WebViewHostController: UIViewController {
             config.userContentController.addUserScript(WebViewCoordinator.syncScript)
             config.userContentController.add(coordinator, name: Constants.syncMessage)
         }
+        // 초과기록 알림. 웹 푸시가 없는 자리라 앱이 기기 안에서 울린다.
+        config.userContentController.addScriptMessageHandler(AlarmBridge(), contentWorld: .page, name: Constants.alarmMessage)
 
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = coordinator
