@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { dayLabel, isRecordHour, isWeekend, kstAt, kstToday, nextDate, nudgeAt, parseHhmm, planDay, readTyped } from "../src/core/overtime/plan.ts";
 import { FAQ, SOURCES } from "../src/core/overtime/faq.ts";
+import { applyEvents, jobsOf, readEvents, segmentsOf } from "../src/core/overtime/alarms.ts";
 
 const vapid = createECDH("prime256v1");
 vapid.generateKeys();
@@ -232,6 +233,89 @@ check("원본에 없는 몰아 신청 이야기는 싣지 않는다", FAQ.every(
 // ⑭ 공개 문구 규칙: 긴 줄표 없음
 const texts = FAQ.flatMap((f) => [f.q, f.a]).concat(mix.slots.map((s) => s.reason ?? ""), long.warnings, inside.warnings);
 check("문구에 긴 줄표 없음", texts.every((s) => !s.includes(String.fromCharCode(0x2014))));
+
+// ⑮ 알림 목록(alarms.ts): 토막 · 묻기 · 칸 · 요약 · 다음 날, 그리고 알림 단추의 답
+const noteFrom = (plan, holiday = false) => ({
+  clicks: plan.slots.flatMap((s) => (nudgeAt(s) === null ? [] : [{ hour: s.hour, at: nudgeAt(s) }])),
+  reasons: plan.slots.flatMap((s) => (s.reason ? [{ hour: s.hour, reason: s.reason }] : [])),
+  exclusions: plan.exclusions,
+  done: false,
+  holiday,
+});
+const D = "2026-10-07";
+const dawnEve = noteFrom(planDay(day({ spans: [r("06:00", "21:00")], gaps: [{ kind: "meal", ...r("18:00", "19:00") }] })));
+const midnight0 = kstAt(D, 0);
+const clock = (job) => {
+  const m = Math.round((job.at - midnight0) / 60_000);
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+};
+const list = (days, now = midnight0) => jobsOf(days, now).map((j) => `${j.kind}${j.hour ?? ""}@${j.kind === "day" ? j.date : clock(j)}`);
+
+const segs = segmentsOf(dawnEve);
+check("06~21 신청은 출근 전·퇴근 뒤 두 토막", segs.length === 2 && segs[0].first === 6 && segs[0].until === 9 && segs[1].first === 18 && segs[1].until === 21, JSON.stringify(segs));
+const base0 = list({ [D]: dawnEve });
+check(
+  "묻기는 토막 10분 전, 칸은 권장 시각, 요약은 끝나고 10분 뒤, 다음 날 09:10",
+  base0.join(",") === "ask6@05:50,slot6@06:30,slot7@07:30,slot8@08:30,ask18@17:50,slot19@19:30,slot20@20:30,sum@21:10,day@2026-10-07",
+  base0.join(","),
+);
+check("식사로 비운 18시 칸은 알림 없음(사유 칸)", !base0.includes("slot18@18:30"));
+const sum0 = jobsOf({ [D]: dawnEve }, midnight0).find((j) => j.kind === "sum");
+check("요약은 [확인] 칸 수와 사유 칸 수를 싣는다", sum0.clicks === 5 && sum0.reasons === 1 && sum0.pressed.length === 0, JSON.stringify(sum0));
+
+const hol0 = list({ [D]: { ...dawnEve, holiday: true } });
+check("휴일 첫 토막은 30분 전에 묻는다", hol0[0] === "ask6@05:30" && hol0.includes("ask18@17:50"), hol0.join(","));
+
+const left0 = list({ [D]: { ...dawnEve, left: [18] } });
+check("「안 남아요」 한 토막은 묻기·칸이 없고 요약은 남은 토막 끝에", !left0.some((j) => /ask18|slot19|slot20/.test(j)) && left0.includes("sum@09:10"), left0.join(","));
+const leftAll = list({ [D]: { ...dawnEve, left: [6, 18] } });
+check("두 토막 다 안 남으면 요약도 없고 다음 날만", leftAll.join(",") === "day@2026-10-07", leftAll.join(","));
+
+const pressed0 = jobsOf({ [D]: { ...dawnEve, pressed: [19] } }, midnight0);
+check("「눌렀어요」 한 칸은 다시 울리지 않는다", !pressed0.some((j) => j.kind === "slot" && j.hour === 19));
+check("요약에 눌렀다고 한 칸이 실린다", pressed0.find((j) => j.kind === "sum").pressed.join() === "19");
+
+const ended0 = list({ [D]: { ...dawnEve, endedAt: 19 * 60 + 5 } });
+check("「끝났어요」 뒤 칸과 요약은 없다", !ended0.some((j) => /slot19|slot20|sum/.test(j)) && ended0.includes("ask18@17:50"), ended0.join(","));
+
+const stay0 = list({ [D]: { ...dawnEve, stay: [18] } });
+check("「남아요」 한 토막은 다시 묻지 않는다", !stay0.includes("ask18@17:50") && stay0.includes("slot19@19:30"));
+
+const late0 = list({ [D]: dawnEve }, kstAt(D, 19 * 60 + 40));
+check("지난 알림은 빼고 넘긴다", late0.join(",") === "slot20@20:30,sum@21:10,day@2026-10-07", late0.join(","));
+check("확인자료를 올린 날은 알림이 없다", jobsOf({ [D]: { ...dawnEve, done: true } }, midnight0).length === 0);
+
+const ev = applyEvents({ [D]: dawnEve }, [
+  { op: "done", date: D, hour: 19 },
+  { op: "done", date: D, hour: 19 },
+  { op: "missed", date: D, hour: 20 },
+  { op: "leave", date: D, hour: 6 },
+  { op: "stay", date: D, hour: 18 },
+  { op: "end", date: D, minute: 1250 },
+  { op: "end", date: D, minute: 1300 },
+  { op: "done", date: "2026-10-08", hour: 19 },
+]);
+check(
+  "답을 합친다(같은 답 두 번은 한 번, 끝난 때는 이른 쪽)",
+  ev[D].pressed.join() === "19" && ev[D].missed.join() === "20" && ev[D].left.join() === "6" && ev[D].stay.join() === "18" && ev[D].endedAt === 1250,
+  JSON.stringify(ev[D]),
+);
+check("남기지 않은 날의 답은 버린다", ev["2026-10-08"] === undefined);
+const flip = applyEvents(ev, [{ op: "done", date: D, hour: 20 }]);
+check("「못 눌렀어요」 뒤 「눌렀어요」면 눌렀어요로 바뀐다", flip[D].pressed.join() === "19,20" && flip[D].missed.length === 0);
+check("「올렸어요」는 그날을 닫는다", applyEvents({ [D]: dawnEve }, [{ op: "uploaded", date: D }])[D].done === true);
+const readBack = readEvents([
+  { op: "done", date: D, hour: 19 },
+  { op: "done", date: D, hour: 24 },
+  { op: "end", date: "10/7", minute: 10 },
+  { op: "end", date: D, minute: 1441 },
+  { op: "send", date: D },
+  "junk",
+  { op: "uploaded", date: D },
+]);
+check("앱이 넘긴 답에서 틀린 줄은 버린다", readBack.length === 2 && readBack[0].op === "done" && readBack[1].op === "uploaded", JSON.stringify(readBack));
+const serverJobs = push.readJobs(jobsOf({ [D]: dawnEve }, midnight0), midnight0);
+check("웹 푸시 서버는 묻기·요약을 버리고 칸·다음 날만 맡는다", serverJobs.every((j) => j.kind === "slot" || j.kind === "day") && serverJobs.length === 6, String(serverJobs.length));
 
 console.log(`\n${checked - problems.length}/${checked}`);
 if (problems.length > 0) {

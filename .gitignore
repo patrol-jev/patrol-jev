@@ -42,5 +42,14 @@ next-env.d.ts
 !.env.example
 road/
 
+# 분링의 자치구 보상 색인 (실제 구 이름이 들어갑니다. 꼴은 recycle-data.example.json)
+recycle-data/
+
 # 계측용 임시 파일 (실물 자료가 들어갑니다)
 scratch-*
+
+# 얼굴 감지 가중치 (npm install 때 꾸러미에서 복사됩니다)
+/public/models/
+
+# 분리배출 보상 색인 (실제 구 이름이 들어갑니다. 꼴은 recycle-data.example.json)
+/recycle-data/

@@ -2,15 +2,14 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { applyEvents, jobsOf, segmentsOf, type DayForm, type DayNote } from "@/core/overtime/alarms";
 import { FAQ, SOURCES } from "@/core/overtime/faq";
 import {
-  DAY_NUDGE,
   dayLabel,
   hhmm,
   isWeekend,
   kstAt,
   kstToday,
-  nextDate,
   nudgeAt,
   parseHhmm,
   planDay,
@@ -22,7 +21,7 @@ import {
   type Plan,
   type Range,
 } from "@/core/overtime/plan";
-import { isNativeAlarm, newDeviceId, pushReady, subscribe, syncJobs, unsubscribe, type PushJob, type PushReady } from "./push-client";
+import { isNativeAlarm, newDeviceId, pushReady, subscribe, syncJobs, takeEvents, unsubscribe, type PushReady } from "./push-client";
 
 /**
  * 초과기록. 오늘 초과 시간을 넣으면 인사랑 「근무기록」에서 칸마다 할 일이 나온다.
@@ -33,6 +32,9 @@ import { isNativeAlarm, newDeviceId, pushReady, subscribe, syncJobs, unsubscribe
  *
  * 다음 날 이 화면을 열면 전날 초과의 확인자료를 올릴 차례라는 카드가 맨 위에 뜬다.
  * 「올렸어요」를 누르면 카드와 그날 알림이 함께 사라진다.
+ *
+ * 무엇을 언제 울릴지(묻기 · 칸 · 요약 · 다음 날)는 `src/core/overtime/alarms.ts` 가 정한다.
+ * 아이폰 앱에서 알림 단추(눌렀어요 · 안 남아요 …)로 답하면 앱이 쌓아 두었다가 이 화면이 열릴 때 받아 합친다.
  *
  * 색: 이 화면에는 Jev 값도 생성 모델의 글도 없다. 그래서 무지개빛도 회색 규칙도 쓰지 않는다.
  * 파랑은 [확인]을 누르는 칸, 주황은 사유를 쓰는 칸. 두 가지 뜻에만 쓴다.
@@ -55,14 +57,6 @@ interface TextRange {
 
 interface TextGap extends TextRange {
   kind: GapKind;
-}
-
-/** 하루에 남기는 것. 다음 날 카드와 알림을 만드는 데 쓴다. */
-interface DayNote {
-  clicks: Array<{ hour: number; at: number }>;
-  reasons: Array<{ hour: number; reason: string }>;
-  exclusions: Range[];
-  done: boolean;
 }
 
 interface Stored {
@@ -119,31 +113,32 @@ function toRange(r: TextRange): Range | null {
   return { from, to };
 }
 
-function noteOf(plan: Plan): DayNote {
+/** 셈에서 나온 칸으로 하루 기록을 만든다. 알림 단추로 받은 답(`prev`)은 그대로 둔다. */
+function noteOf(plan: Plan, holiday: boolean, form: DayForm, prev?: DayNote): DayNote {
   return {
+    ...prev,
+    form,
     clicks: plan.slots.flatMap((s) => {
       const at = nudgeAt(s);
       return at === null ? [] : [{ hour: s.hour, at }];
     }),
     reasons: plan.slots.flatMap((s) => (s.reason ? [{ hour: s.hour, reason: s.reason }] : [])),
     exclusions: plan.exclusions,
-    done: false,
+    done: prev?.done ?? false,
+    holiday,
   };
 }
 
-/** 맡길 알림. 아직 안 지난 [확인] 칸과, 확인자료를 안 올린 날의 다음 날 아침. */
-function jobsOf(days: Record<string, DayNote>, now: number): PushJob[] {
-  const jobs: PushJob[] = [];
-  for (const [date, note] of Object.entries(days)) {
-    if (note.done) continue;
-    for (const c of note.clicks) {
-      const at = kstAt(date, c.at);
-      if (at > now) jobs.push({ at, kind: "slot", hour: c.hour });
-    }
-    const day = kstAt(nextDate(date), DAY_NUDGE);
-    if (day > now) jobs.push({ at: day, kind: "day", date });
-  }
-  return jobs.sort((a, b) => a.at - b.at);
+/** 주소의 `date` · `slot`. 「못 눌렀어요」 알림이 그 날, 그 칸으로 연다. */
+function fromAddress(): { date: string | null; slot: number | null } {
+  if (typeof window === "undefined") return { date: null, slot: null };
+  const q = new URLSearchParams(window.location.search);
+  const date = q.get("date");
+  const slot = Number(q.get("slot"));
+  return {
+    date: date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null,
+    slot: q.get("slot") !== null && Number.isInteger(slot) && slot >= 0 && slot < 24 ? slot : null,
+  };
 }
 
 export default function OvertimeApp() {
@@ -158,12 +153,15 @@ export default function OvertimeApp() {
 
 function Board() {
   const [first] = useState(readStore);
+  const [address] = useState(fromAddress);
   const [tab, setTab] = useState<Tab>("today");
-  const [date, setDate] = useState(() => kstToday());
-  const [holiday, setHoliday] = useState(() => isWeekend(kstToday()));
-  const [base, setBase] = useState<TextRange>(first.base);
-  const [spans, setSpans] = useState<TextRange[]>(() => [{ from: first.base.to, to: "21:00" }]);
-  const [gaps, setGaps] = useState<TextGap[]>([]);
+  const [date, setDate] = useState(() => address.date ?? kstToday());
+  // 남긴 날이면 그날 넣었던 값으로 연다. 아니면 기본값.
+  const [opened] = useState(() => first.days[date]);
+  const [holiday, setHoliday] = useState(() => opened?.holiday ?? isWeekend(date));
+  const [base, setBase] = useState<TextRange>(() => opened?.form?.base ?? first.base);
+  const [spans, setSpans] = useState<TextRange[]>(() => opened?.form?.spans ?? [{ from: first.base.to, to: "21:00" }]);
+  const [gaps, setGaps] = useState<TextGap[]>(() => opened?.form?.gaps ?? []);
   const [days, setDays] = useState<Record<string, DayNote>>(first.days);
   const [alarm, setAlarm] = useState<string | null>(first.alarm);
   const [ready] = useState<PushReady>(pushReady);
@@ -196,16 +194,16 @@ function Board() {
     const next = { ...days };
     const kept = next[date];
     if (kept && !kept.done) {
-      if (plan.slots.length > 0) next[date] = noteOf(plan);
+      if (plan.slots.length > 0) next[date] = noteOf(plan, holiday, { base, spans, gaps }, kept);
       else delete next[date];
     }
     return next;
-  }, [days, date, plan]);
+  }, [days, date, plan, holiday, base, spans, gaps]);
 
   const saved = shown[date] !== undefined && !shown[date].done;
   const keepDay = () => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || plan.slots.length === 0) return;
-    setDays({ ...shown, [date]: noteOf(plan) });
+    setDays({ ...shown, [date]: noteOf(plan, holiday, { base, spans, gaps }, shown[date]) });
   };
   const dropDay = () => {
     const next = { ...shown };
@@ -215,17 +213,35 @@ function Board() {
 
   useEffect(() => writeStore({ base, days: shown, alarm }), [base, shown, alarm]);
 
-  // 알림이 켜져 있으면 날마다 할 일이 바뀔 때 서버에 맡긴 목록도 맞춘다. 연달아 바뀌면 마지막 것만.
+  // 앱의 알림 단추로 받은 답을 합친다. 화면을 열 때와 다시 앞으로 올 때. 다 받기 전에는 목록을 맞추지 않는다
+  // (앱에서 「안 남아요」 한 토막을 옛 목록으로 되살리지 않게).
+  const [taken, setTaken] = useState(!native);
+  useEffect(() => {
+    if (!native) return;
+    const take = () =>
+      void takeEvents().then((events) => {
+        if (events.length > 0) setDays((d) => applyEvents(d, events));
+        setTaken(true);
+      });
+    take();
+    const onShow = () => {
+      if (document.visibilityState === "visible") take();
+    };
+    document.addEventListener("visibilitychange", onShow);
+    return () => document.removeEventListener("visibilitychange", onShow);
+  }, [native]);
+
+  // 알림이 켜져 있으면 날마다 할 일이 바뀔 때 맡긴 목록도 맞춘다. 연달아 바뀌면 마지막 것만.
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (!alarm) return;
+    if (!alarm || !taken) return;
     if (syncTimer.current) clearTimeout(syncTimer.current);
     syncTimer.current = setTimeout(() => {
       void syncJobs(alarm, jobsOf(shown, Date.now())).then((ok) => {
         if (!ok) setAlarmNote("알림을 맞추지 못했습니다. 잠시 뒤 다시 열어 주세요.");
       });
     }, 1200);
-  }, [alarm, shown]);
+  }, [alarm, shown, taken]);
 
   const turnOn = useCallback(async () => {
     setBusy(true);
@@ -253,6 +269,20 @@ function Board() {
   }, [alarm]);
 
   const markDone = (d: string) => setDays({ ...shown, [d]: { ...shown[d], done: true } });
+  /** 칸 하나를 「눌렀어요」로 표시하거나 푼다. 본인 메모이고, 그 칸 알림만 멈춘다. */
+  const togglePressed = (hour: number) => {
+    const note = shown[date];
+    if (!note) return;
+    const on = note.pressed?.includes(hour);
+    const pressed = on ? (note.pressed ?? []).filter((h) => h !== hour) : [...(note.pressed ?? []), hour].sort((a, b) => a - b);
+    setDays({ ...shown, [date]: { ...note, pressed, missed: (note.missed ?? []).filter((h) => h !== hour) } });
+  };
+  /** 「안 남아요」·「끝났어요」를 되돌린다. */
+  const undoLeave = () => {
+    const note = shown[date];
+    if (!note) return;
+    setDays({ ...shown, [date]: { ...note, left: [], endedAt: undefined } });
+  };
 
   const pending = Object.entries(shown)
     .filter(([d, n]) => d < today && !n.done)
@@ -262,10 +292,26 @@ function Board() {
   const pickDate = (value: string) => {
     setDays(shown);
     setDate(value);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) setHoliday(isWeekend(value));
+    const kept = shown[value];
+    if (kept?.form) {
+      setHoliday(kept.holiday ?? isWeekend(value));
+      setBase(kept.form.base);
+      setSpans(kept.form.spans);
+      setGaps(kept.form.gaps);
+    } else if (/^\d{4}-\d{2}-\d{2}$/.test(value)) setHoliday(isWeekend(value));
   };
 
   const clicks = plan.slots.filter((s) => s.action === "click").length;
+  const note = saved ? shown[date] : undefined;
+  // 「안 남아요」 한 토막과 「끝났어요」 뒤 칸. 알림이 울리지 않는 칸이라 흐리게 보인다.
+  const offHours = new Set<number>();
+  if (note) {
+    for (const seg of segmentsOf(note)) {
+      for (let h = seg.first; h < seg.until; h++) {
+        if (note.left?.includes(seg.first) || (note.endedAt !== undefined && h * 60 >= note.endedAt)) offHours.add(h);
+      }
+    }
+  }
 
   return (
     <>
@@ -328,6 +374,16 @@ function Board() {
               </>
             ) : (
               "미기록 사유 쓸 칸 없음(다 눌렀다면)"
+            )}
+            {(n.missed?.length ?? 0) > 0 && (
+              <div>
+                못 눌렀다고 한 칸(사유 씀): {n.missed!.map((h) => slotLabel(h)).join(", ")}
+              </div>
+            )}
+            {(n.pressed?.length ?? 0) > 0 && (
+              <div className="text-[var(--muted)]">
+                눌렀다고 표시한 칸 {n.pressed!.length} / [확인] 칸 {n.clicks.length}
+              </div>
             )}
             {n.exclusions.length > 0 && (
               <div>근무제외시간: {n.exclusions.map((r) => `${hhmm(r.from)}~${hhmm(r.to)}`).join(", ")}</div>
@@ -449,8 +505,15 @@ function Board() {
                 {plan.slots.map((s) => {
                   const at = nudgeAt(s);
                   const quiet = holiday && s.hour >= 9 && s.hour < 18;
+                  const pressed = note?.pressed?.includes(s.hour) ?? false;
+                  const off = offHours.has(s.hour);
+                  const asked = address.date === date && address.slot === s.hour;
                   return (
-                    <div key={s.hour} className="flex gap-3 border-b border-[var(--line)] px-3 py-2.5 last:border-b-0">
+                    <div
+                      key={s.hour}
+                      className="flex gap-3 border-b border-[var(--line)] px-3 py-2.5 last:border-b-0"
+                      style={asked ? { background: "var(--wash)" } : off ? { opacity: 0.5 } : undefined}
+                    >
                       <div className="w-[64px] shrink-0 text-[13px] font-medium tnum">{slotLabel(s.hour)}</div>
                       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                         {s.action === "click" ? (
@@ -473,7 +536,22 @@ function Board() {
                             {n}
                           </span>
                         ))}
+                        {asked && s.action === "click" && !pressed && (
+                          <span className="text-[11px]" style={{ color: REASON }}>
+                            못 눌렀다면 이 칸은 미기록 사유를 씁니다. 그 시간에 무엇을 했는지 그대로 적습니다(식사 · 현장근무 · 개인용무 외출 등).
+                          </span>
+                        )}
                       </div>
+                      {saved && s.action === "click" && (
+                        <button
+                          onClick={() => togglePressed(s.hour)}
+                          className="h-fit shrink-0 rounded-md border px-2 py-1 text-[11px]"
+                          style={pressed ? { borderColor: CLICK, background: CLICK, color: "#fff" } : { borderColor: CLICK, color: CLICK }}
+                          aria-pressed={pressed}
+                        >
+                          {pressed ? "눌렀어요 ✓" : "눌렀어요"}
+                        </button>
+                      )}
                     </div>
                   );
                 })}
@@ -508,6 +586,14 @@ function Board() {
                   <button onClick={dropDay} className="text-[11px] text-[var(--muted)] underline underline-offset-2">
                     빼기
                   </button>
+                  {offHours.size > 0 && (
+                    <span className="flex w-full flex-wrap items-center gap-2 text-[11px] text-[var(--muted)]">
+                      {note?.endedAt !== undefined ? `${hhmm(note.endedAt)}에 끝났다고 했습니다.` : "안 남는다고 한 토막이 있습니다."} 흐린 칸은 알림이 울리지 않습니다.
+                      <button onClick={undoLeave} className="underline underline-offset-2">
+                        되돌리기
+                      </button>
+                    </span>
+                  )}
                 </>
               ) : (
                 <>
@@ -524,7 +610,7 @@ function Board() {
               )}
             </div>
 
-            <Alarm ready={ready} on={alarm !== null} busy={busy} note={alarmNote} onOn={turnOn} onOff={turnOff} />
+            <Alarm ready={ready} native={native} on={alarm !== null} busy={busy} note={alarmNote} onOn={turnOn} onOff={turnOff} />
 
             <Checklist />
           </section>
@@ -636,6 +722,7 @@ function Remove({ onClick }: { onClick: () => void }) {
 
 function Alarm({
   ready,
+  native,
   on,
   busy,
   note,
@@ -643,6 +730,7 @@ function Alarm({
   onOff,
 }: {
   ready: PushReady;
+  native: boolean;
   on: boolean;
   busy: boolean;
   note: string | null;
@@ -671,7 +759,10 @@ function Alarm({
             진동 알림 켜기
           </button>
         )}
-        <span className="text-[11px] text-[var(--muted)]">남긴 날의 [확인] 칸마다, 그리고 다음 날 아침 확인자료 올릴 때 울립니다.</span>
+        <span className="text-[11px] text-[var(--muted)]">
+          남긴 날의 [확인] 칸마다, 그리고 다음 날 아침 확인자료 올릴 때 울립니다.
+          {native && " 앱에서는 토막 10분 전에 「남으세요?」를 묻고, 끝나면 하루 요약을 보냅니다. 알림 단추로 「눌렀어요」 · 「10분 뒤」 · 「오늘은 끝났어요」를 고릅니다."}
+        </span>
       </div>
       {ready === "install" && !on && (
         <p className="text-[11px] text-[var(--muted)]">아이폰은 공유 → 「홈 화면에 추가」 한 뒤, 홈 화면의 초과기록에서 켭니다.</p>

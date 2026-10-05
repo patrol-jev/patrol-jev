@@ -8,7 +8,10 @@
  * 앱이 기기 안에서 울린다(`ios/Patrol/Alarm/AlarmCenter.swift`). 이때는 서버에 아무것도 맡기지 않는다.
  */
 
-export type PushJob = { at: number; kind: "slot"; hour: number } | { at: number; kind: "day"; date: string };
+import { readEvents, type AlarmEvent, type AlarmJob } from "@/core/overtime/alarms";
+
+/** 맡길 알림. 웹 푸시 서버는 칸과 다음 날만 울리고 묻기·요약은 버린다(단추가 없는 알림이라). 앱은 다 울린다. */
+export type PushJob = AlarmJob;
 
 export type PushReady = "yes" | "no" | "install";
 
@@ -16,7 +19,7 @@ const SW = "/overtime-sw.js";
 const SCOPE = "/overtime";
 const API = "/api/overtime/push";
 
-type NativeReply = { ok?: boolean; why?: string };
+type NativeReply = { ok?: boolean; why?: string; events?: unknown };
 type NativeHandler = { postMessage: (message: unknown) => Promise<NativeReply | undefined> };
 
 /** 앱 안이면 앱이 연 알림 통로. 사파리·다른 브라우저면 null. */
@@ -101,6 +104,14 @@ export async function syncJobs(id: string, jobs: PushJob[]): Promise<boolean> {
     body: JSON.stringify({ id, subscription: sub.toJSON(), jobs }),
   });
   return res.ok;
+}
+
+/** 앱의 알림 단추로 받은 답을 가져온다. 가져간 답은 앱에서 지워진다. 앱 밖이면 빈 목록. */
+export async function takeEvents(): Promise<AlarmEvent[]> {
+  const native = nativeAlarm();
+  if (!native) return [];
+  const got = await native.postMessage({ op: "take" }).catch(() => undefined);
+  return readEvents(got?.events);
 }
 
 export async function unsubscribe(id: string): Promise<void> {
