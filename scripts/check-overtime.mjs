@@ -12,6 +12,9 @@ import { join } from "node:path";
 import { dayLabel, isRecordHour, isWeekend, kstAt, kstToday, nextDate, nudgeAt, parseHhmm, planDay, readTyped } from "../src/core/overtime/plan.ts";
 import { FAQ, SOURCES } from "../src/core/overtime/faq.ts";
 import { applyEvents, DEFAULT_PREFS, jobsOf, readEvents, readPrefs, segmentsOf } from "../src/core/overtime/alarms.ts";
+import { ALARM_OFF, BASIC, lineOf, sentencesOf } from "../src/core/overtime/talk.ts";
+import { answer, readDate, replyTo, searchFaq, stepReply, STEPS } from "../src/core/overtime/chat.ts";
+import { holidayDates, holidayLabel, isHoliday } from "../src/core/overtime/holidays.ts";
 
 const vapid = createECDH("prime256v1");
 vapid.generateKeys();
@@ -341,6 +344,191 @@ const lateNight = noteFrom(planDay(day({ spans: [r("21:00", "24:00")] })));
 check("하루 종일이면 자정에 끝나는 날도 요약(00:10)", jobsOf({ [D]: lateNight }, midnight0).some((j) => j.kind === "sum" && j.at === kstAt("2026-10-08", 10)));
 check("저장된 설정이 틀리면 기본으로", JSON.stringify(readPrefs({ from: 600, to: 300, askBefore: -5, sound: "no" })) === JSON.stringify(DEFAULT_PREFS));
 check("저장된 설정을 읽는다", JSON.stringify(readPrefs({ from: 420, to: 1380, askBefore: 30, sound: false })) === JSON.stringify({ from: 420, to: 1380, askBefore: 30, sound: false }));
+
+// ⑰ 말풍선(talk.ts): 상태마다 한 마디, 위에서부터 먼저 맞는 것
+const at = (date, text) => kstAt(date, t(text));
+const say = (over) => lineOf({ now: at(D, "12:00"), days: { [D]: dawnEve }, date: null, draft: null, alarm: true, native: true, ...over });
+const said = [];
+const hear = (over) => {
+  const line = say(over);
+  said.push(line.text, line.sub ?? "");
+  return line;
+};
+check("처음엔 기본 안내", hear({ days: {} }).text === BASIC);
+const yday = hear({ now: at(nextDate(D), "09:10") });
+check("다음 날엔 확인자료 차례 + 올렸어요", yday.text === `어제 ${dayLabel(D)} 초과 확인자료 올릴 차례예요.` && yday.uploaded === D, yday.text);
+check("사유 쓸 칸이 하나면 그 칸", yday.sub.startsWith("사유 쓸 칸은 18~19시 하나예요."), yday.sub);
+const ydayMissed = hear({ now: at(nextDate(D), "09:10"), days: { [D]: { ...dawnEve, missed: [19] } } });
+check("못 눌렀다고 한 칸도 사유 칸에 더한다", ydayMissed.sub.startsWith("사유 쓸 칸은 18~19시, 19~20시 모두 2칸이에요."), ydayMissed.sub);
+check("올린 날은 말하지 않는다", hear({ now: at(nextDate(D), "09:10"), days: { [D]: { ...dawnEve, done: true } } }).text === BASIC);
+const slot19 = hear({ now: at(D, "19:05") });
+check("지금 칸이면 권장 시각 + 눌렀어요", slot19.text === "지금 19~20시 칸이에요. 19:30쯤 [확인] 눌러 주세요." && slot19.press === 19, slot19.text);
+check("권장 시각이 지났으면 바로 누르라고", hear({ now: at(D, "19:40") }).text === "지금 19~20시 칸이에요. [확인] 눌러 주세요.");
+const pressed19 = hear({ now: at(D, "19:40"), days: { [D]: { ...dawnEve, pressed: [19] } } });
+check("누른 칸이면 다음 칸을 말한다", pressed19.text === "19~20시 칸은 눌렀어요. 다음 20~21시 칸에 또 알려 드릴게요." && pressed19.press === undefined, pressed19.text);
+const meal18 = hear({ now: at(D, "18:10") });
+check(
+  "사유 칸이면 사유를 말한다",
+  meal18.text === "지금 18~19시 칸은 [확인] 대신 사유를 쓰는 칸이에요." && meal18.sub === "내일 미기록 사유에 「저녁 식사」라고 적어요.",
+  `${meal18.text} ${meal18.sub}`,
+);
+const sayDawn = hear({ now: at(D, "05:00") });
+check(
+  "토막 전엔 걸린 시간 + 묻는 때(앱)",
+  sayDawn.text === "오늘 초과 06:00~09:00, 18:00~21:00 걸려 있어요." && sayDawn.sub === "05:50에 남으실지 여쭤볼게요.",
+  `${sayDawn.text} ${sayDawn.sub}`,
+);
+const noon = hear({});
+check("토막 사이엔 남은 것만", noon.text === "오늘 남은 초과는 18:00~21:00 걸려 있어요." && noon.sub === "17:50에 남으실지 여쭤볼게요.", `${noon.text} ${noon.sub}`);
+check("웹이면 다음 [확인] 알림을 말한다(사유 칸은 건너뜀)", hear({ native: false }).sub === "19:30쯤 [확인] 알림을 드릴게요.");
+const after0 = nextDate(D);
+const offOff = hear({ alarm: false });
+check("알림이 꺼져 있으면 켜자고(누르는 라벨)", offOff.offer === "alarm" && offOff.sub === undefined && ALARM_OFF === "알림을 켜 두면 칸마다 제가 챙길게요.");
+check("알림이 켜져 있으면 권하지 않는다", hear({}).offer === undefined && hear({ days: { [after0]: dawnEve }, date: after0 }).offer === undefined);
+check("남긴 앞날도 알림이 꺼져 있으면 권한다", hear({ alarm: false, days: { [after0]: dawnEve }, date: after0 }).offer === "alarm");
+check(
+  "기본 안내는 세 문장으로 친다",
+  JSON.stringify(sentencesOf(BASIC)) ===
+    JSON.stringify([
+      "초과가 걸린 시간에는 한 시간 칸마다 인사랑 [근무기록] → [확인]을 한 번 눌러요.",
+      "지문과 퇴근확인은 그대로 따로 해요.",
+      "못 누른 칸은 미기록 사유를 쓰고, 확인자료는 다음 날 날짜별로 한 건씩 올려요.",
+    ]),
+);
+check("날짜의 점에서는 끊지 않는다", sentencesOf("어제 10/5(월) 초과 확인자료 올릴 차례예요.").length === 1);
+check("묻는 때 설정을 따른다", hear({ prefs: P({ askBefore: 30 }) }).sub === "17:30에 남으실지 여쭤볼게요.");
+const ended = hear({ now: at(D, "19:50"), days: { [D]: { ...dawnEve, endedAt: t("19:40") } } });
+check("「끝났어요」 뒤엔 여기까지", ended.text === "오늘은 여기까지예요. 나머지 칸은 안 울릴게요.", ended.text);
+check("남은 토막을 「안 남아요」 했어도 여기까지", hear({ days: { [D]: { ...dawnEve, left: [18] } } }).text.startsWith("오늘은 여기까지"));
+check("다 지났으면 수고했다고", hear({ now: at(D, "22:00") }).text === "오늘 칸은 다 지났어요. 수고하셨어요.");
+const after = nextDate(D);
+check("고른 날, 시간 전", hear({ days: {}, date: after, draft: { clicks: 0, reasons: 0 } }).text === `${dayLabel(after)} 초과 시간을 넣어 주세요.`);
+check("고른 날, 셈 결과", hear({ days: {}, date: after, draft: { clicks: 2, reasons: 1 } }).text === "3칸이에요. [확인] 2칸, 사유 1칸.");
+check("고른 날을 남겼으면", hear({ days: { [after]: dawnEve }, date: after }).text === `${dayLabel(after)} 초과를 남겼어요. 그날 칸마다 챙길게요.`);
+check("말풍선에 긴 줄표 없음", said.every((s) => !s.includes(String.fromCharCode(0x2014))));
+
+// ⑱ 휴일 표(holidays.ts): 2026 · 2027 공휴일과 대체공휴일
+check("2026 · 2027 표의 날 수", holidayDates().length === 40, String(holidayDates().length));
+check("표의 날은 모두 2026 · 2027", holidayDates().every((d) => d.startsWith("2026-") || d.startsWith("2027-")));
+check("한글날 · 대체공휴일(개천절)은 휴일", isHoliday("2026-10-09") && isHoliday("2026-10-05") && holidayLabel("2026-10-05") === "대체공휴일(개천절)");
+check("추석 연휴 사흘", ["2026-09-24", "2026-09-25", "2026-09-26"].every(isHoliday));
+check("2027 설날 대체공휴일 2/9", isHoliday("2027-02-09") && holidayLabel("2027-02-07") === "설날");
+check("평일은 휴일 아님", !isHoliday("2026-10-06") && holidayLabel("2026-10-06") === null);
+check("토 · 일은 표에 없어도 휴일", isHoliday("2026-10-10") && holidayLabel("2026-10-10") === "토요일" && isHoliday("2028-01-02"));
+
+// ⑲ 채팅(chat.ts): 말을 읽어 제안을 만든다. 모델 없음
+const C = { today: "2026-10-06", date: null, holiday: false, base: { from: "09:00", to: "18:00" }, spans: [{ from: "18:00", to: "21:00" }], gaps: [], nowMinute: 13 * 60 + 19 };
+const ask = (text, over = {}) => replyTo(text, { ...C, ...over });
+const said2 = [];
+const keep2 = (r) => {
+  said2.push(r.text, r.sub ?? "", ...(r.chips ?? []));
+  return r;
+};
+const spanOf = (r) => (r.proposal?.spans ?? []).map((x) => `${x.from}~${x.to}`).join(",");
+const gapOf = (r) => (r.proposal?.gaps ?? []).map((x) => `${x.kind}${x.from}~${x.to}`).join(",");
+check("날짜 읽기: 오늘 · 내일 · 모레", readDate("오늘", C.today).date === "2026-10-06" && readDate("내일", C.today).date === "2026-10-07" && readDate("모레", C.today).date === "2026-10-08");
+check("날짜 읽기: 10/9 · 10월 9일", readDate("10/9 야근", C.today).date === "2026-10-09" && readDate("10월 9일", C.today).date === "2026-10-09");
+check("날짜 읽기: 토요일 · 다음 주 월요일", readDate("토요일", C.today).date === "2026-10-10" && readDate("다음 주 월요일", C.today).date === "2026-10-12");
+check("날짜 읽기: 12월에 1월 3일은 내년", readDate("1월 3일", "2026-12-20").date === "2027-01-03");
+const r1 = keep2(ask("오늘 6시부터 9시까지"));
+check("평일 6시~9시는 저녁 18~21", spanOf(r1) === "18:00~21:00" && r1.proposal.date === "2026-10-06" && r1.sub === "그러면 3칸이에요. [확인] 3칸, 사유 0칸.", `${spanOf(r1)} ${r1.sub}`);
+const r2 = keep2(ask("6시부터 9시까지 하고 7시에 밥 먹었어"));
+check("토막 + 식사(시각 하나면 1시간)", spanOf(r2) === "18:00~21:00" && gapOf(r2) === "meal19:00~20:00" && r2.sub.includes("사유 1칸"), `${spanOf(r2)} ${gapOf(r2)}`);
+check("「7시에 저녁 30분」은 식사 30분", gapOf(keep2(ask("7시에 저녁 30분"))) === "meal19:00~19:30");
+check("「7시 30분에 밥」은 19:30부터 1시간", gapOf(keep2(ask("7시 30분에 밥"))) === "meal19:30~20:30");
+const r3 = keep2(ask("내일 휴일 10시~5시"));
+check("휴일은 10시~5시 = 10~17", spanOf(r3) === "10:00~17:00" && r3.proposal.holiday === true, spanOf(r3));
+const r4 = keep2(ask("10월 9일 1시부터 6시"));
+check("표의 공휴일은 저절로 휴일근무(한글날)", r4.proposal.holiday === true && spanOf(r4) === "13:00~18:00" && r4.text.includes("한글날"), r4.text);
+check("「9시까지」는 퇴근부터", spanOf(keep2(ask("9시까지"))) === "18:00~21:00");
+check("「퇴근하고 3시간」", spanOf(keep2(ask("퇴근하고 3시간"))) === "18:00~21:00");
+check("「출근 전 7시부터 9시」는 오전", spanOf(keep2(ask("출근 전 7시부터 9시"))) === "07:00~09:00");
+check("「자정까지」", spanOf(keep2(ask("자정까지"))) === "18:00~24:00");
+check("「저녁 7시부터 밤 11시」", spanOf(keep2(ask("저녁 7시부터 밤 11시"))) === "19:00~23:00");
+const r5 = keep2(ask("토요일 9시~6시 점심 12시~1시"));
+check("한 마디에 두 토막(초과 + 점심)", spanOf(r5) === "09:00~18:00" && gapOf(r5) === "meal12:00~13:00", `${spanOf(r5)} ${gapOf(r5)}`);
+const r6 = keep2(ask("2시부터 3시까지 병원 외출", { gaps: [{ kind: "meal", from: "18:00", to: "19:00" }] }));
+check("비운 때만 말하면 지금 것에 더한다", gapOf(r6) === "meal18:00~19:00,away14:00~15:00" && r6.proposal.spans === undefined, gapOf(r6));
+check("현장 · 외근", gapOf(keep2(ask("8시~9시 현장 점검"))) === "field20:00~21:00");
+check("유연근무 10시~7시는 내 근무", JSON.stringify(keep2(ask("유연근무 10시~7시")).proposal.base) === JSON.stringify({ from: "10:00", to: "19:00" }));
+check("「남겨 줘」는 고른 날이 있어야", keep2(ask("남겨 줘")).proposal === undefined && ask("남겨 줘", { date: "2026-10-06" }).proposal.keep === true);
+check("「알림 켜 줘」", keep2(ask("알림 켜 줘")).proposal.alarm === true);
+check("「평일로」는 휴일을 끈다", keep2(ask("평일로 해 줘", { holiday: true })).proposal.holiday === false);
+const q1 = keep2(ask("식사 시간도 사유 쓰나요?"));
+check("질문은 묻고 답하기 자료로 답한다", q1.proposal === undefined && q1.text.startsWith("그 칸에서 [확인]을 못 눌렀다면") && q1.sub.includes("출처 사용 안내"), q1.text);
+check("알림 질문", keep2(ask("알림이 안 떠요")).text.startsWith("알림은 인사랑에 로그인해"));
+check("자료에 없는 건 없다고 한다", keep2(answer("주차장은 어디인가요?")).text.startsWith("그건 제가 가진 자료에 없어요"));
+check("찾기는 셋까지", searchFaq("알림 확인자료 사유 식사").length <= 3);
+check("같은 말이면 같은 답", JSON.stringify(ask("오늘 6시부터 9시까지")) === JSON.stringify(ask("오늘 6시부터 9시까지")));
+check("순서: 다음 · 3번 · 처음", stepReply("다음", 0).at === 1 && stepReply("3번", 0).at === 2 && stepReply("처음부터", 5).at === 0 && STEPS.length === 8);
+check("순서 탭에서 물으면 답한다", stepReply("반려되면요?", 2).reply?.text.startsWith("확인자료 상세 화면에서") === true);
+check("채팅 말에 긴 줄표 없음", said2.concat(STEPS).every((s) => !s.includes(String.fromCharCode(0x2014))));
+
+// ⑳ 시각 읽기 보완: 0 붙인 24시간 표기 · 오후 12시 = 자정 · 지금 시각으로 고르기
+const at0119 = { nowMinute: 1 * 60 + 19 };
+const at1319 = { nowMinute: 13 * 60 + 19 };
+check("「초과 06:00~09:00 , 18:00~24:00」 두 토막 그대로", spanOf(keep2(ask("초과 06:00~09:00 , 18:00~24:00"))) === "06:00~09:00,18:00~24:00");
+check("「오전 6시~9시 , 오후6시~12시」", spanOf(keep2(ask("오전 6시~9시 , 오후6시~12시"))) === "06:00~09:00,18:00~24:00");
+check("「오전6시부터 오후12시」는 06~24", spanOf(keep2(ask("오전6시부터 오후12시"))) === "06:00~24:00");
+check("새벽 1:19에 「6시~9시」는 오전", spanOf(keep2(ask("6시~9시", at0119))) === "06:00~09:00");
+check("오후 1:19에 「6시~9시」는 저녁", spanOf(keep2(ask("6시~9시", at1319))) === "18:00~21:00");
+check("아침 8:30에 「6시~9시」는 아직 오전 토막 안", spanOf(ask("6시~9시", { nowMinute: 8 * 60 + 30 })) === "06:00~09:00");
+const unsure = keep2(ask("내일 6시~9시", at0119));
+check(
+  "내일의 「6시~9시」는 지금 시각으로 짐작하지 않고 묻는다",
+  unsure.proposal === undefined &&
+    unsure.text === "10/7(수) 아침 06:00~09:00일까요, 저녁 18:00~21:00일까요?" &&
+    unsure.choices.map((c) => spanOf(c.reply)).join("|") === "06:00~09:00|18:00~21:00",
+  unsure.text,
+);
+check("새벽에 물어도 낮에 물어도 같은 되묻기", JSON.stringify(ask("내일 6시~9시", at0119)) === JSON.stringify(ask("내일 6시~9시", at1319)));
+check("고르면 「넣을까요?」로 이어진다", unsure.choices[0].reply.text === "10/7(수) 초과 06:00~09:00로 넣을까요?" && unsure.choices[0].reply.yes === "네, 넣어 주세요");
+check("되묻던 중 「오전으로」는 아침", spanOf(replyTo("오전으로", { ...C, ...at0119 }, unsure.choices[1].reply.proposal)) === "06:00~09:00");
+check("아침이면 근무와 겹치는 「7시~10시」는 묻지 않고 저녁", spanOf(ask("내일 7시~10시")) === "19:00~22:00" && ask("내일 7시~10시").choices === undefined);
+check("오전 · 오후를 말하면 묻지 않는다", spanOf(ask("내일 오전 6시~9시")) === "06:00~09:00" && spanOf(ask("내일 저녁 6시~9시")) === "18:00~21:00");
+check("휴일은 묻지 않는다", ask("내일 휴일 10시~5시").choices === undefined);
+check("낮 12시는 정오", spanOf(ask("휴일 9시부터 낮 12시")) === "09:00~12:00");
+
+// ㉑ 바로 앞 제안 하나만 기억한다
+const first6 = ask("6시~9시", at0119);
+const again = (text, prev = first6.proposal, over = at0119) => replyTo(text, { ...C, ...over }, prev);
+check("직전: 새벽엔 06~09", spanOf(first6) === "06:00~09:00");
+for (const said of ["오후로", "ㄴㄴ 오후로", "아니 오후로", "no 오후", "저녁으로요"]) {
+  const r = keep2(again(said));
+  check(`직전 + 「${said}」 = 18~21`, spanOf(r) === "18:00~21:00" && r.text === "초과 18:00~21:00로 넣을까요?", `${spanOf(r)} ${r.text}`);
+}
+const back = again("오전으로", again("오후로").proposal);
+check("「오전으로」는 다시 06~09", spanOf(back) === "06:00~09:00");
+check("식사만 말했으면 식사를 뒤집는다", gapOf(again("오전으로", ask("7시에 밥").proposal)) === "meal07:00~08:00");
+const tmr = keep2(again("내일로", ask("오늘 6시부터 9시까지", at1319).proposal, at1319));
+check("「내일로」는 날만 바꾼다", tmr.proposal.date === "2026-10-07" && spanOf(tmr) === "18:00~21:00", JSON.stringify(tmr.proposal));
+check("「10/9로」는 공휴일이면 휴일근무로", again("10/9로").proposal.holiday === true);
+check("「응」 · 「ㅇㅇ」 · 「좋아」는 넣기", ["응", "ㅇㅇ", "좋아", "네"].every((t) => again(t).accept === true));
+check("「ㄴㄴ」 · 「아니」만 치면 넣지 않기", ["ㄴㄴ", "아니", "no"].every((t) => again(t).reject === true));
+check("앞 제안이 없으면 「오후로」를 새 말로 읽는다", replyTo("오후로", C).accept === undefined && replyTo("응", C).accept === undefined);
+check("새 시각을 말하면 새로 읽는다", spanOf(again("7시~10시", first6.proposal, at1319)) === "19:00~22:00");
+
+// ㉒ 「바꿀래」 · 「빼 줘」
+const kept = { date: "2026-10-06", saved: true, spans: [{ from: "06:00", to: "09:00" }, { from: "18:00", to: "24:00" }] };
+const change = keep2(ask("바꿀래", kept));
+check("「바꿀래」는 지금 것을 알려 주고 묻는다", change.text === "좋아요. 지금 10/6(화)에 남긴 초과는 06:00~09:00, 18:00~24:00로 되어 있어요. 어떻게 바꿀까요?" && change.proposal === undefined && change.chips.includes("이 날 빼 줘"), change.text);
+check("「수정할래요」 · 「바꾸고 싶어」도", ask("수정할래요", kept).text.startsWith("좋아요. 지금") && ask("바꾸고 싶어", kept).text.startsWith("좋아요. 지금"));
+check("「바꿀래」 다음에 새 시간을 말하면 그대로 읽는다", spanOf(replyTo("6시~10시", { ...C, ...kept, ...at1319 }, change.proposal)) === "18:00~22:00");
+check("시각을 같이 말하면 바로 읽는다", spanOf(ask("7시~10시로 바꿔 줘", { ...kept, ...at1319 })) === "19:00~22:00");
+check("「이 날 빼 줘」", keep2(ask("이 날 빼 줘", kept)).proposal?.drop === true && ask("이 날 빼 줘", { date: "2026-10-06" }).proposal === undefined);
+check("「식사 빼 줘」는 남긴 날 빼기가 아니다", ask("식사 빼 줘", kept).proposal?.drop !== true);
+
+// ㉓ 「네」 단추의 글은 묻는 말과 짝이 맞는다
+const pairs2 = [
+  [ask("이 날 빼 줘", kept), "뺄까요?", "네, 빼 주세요"],
+  [ask("남겨 줘", { date: "2026-10-06" }), "남길까요?", "네, 남겨 주세요"],
+  [ask("알림 켜 줘"), "켤까요?", "네, 켜 주세요"],
+  [ask("오늘 6시부터 9시까지", at1319), "넣을까요?", "네, 넣어 주세요"],
+  [ask("6시~10시", { ...kept, ...at1319 }), "바꿀까요?", "네, 바꿔 주세요"],
+  [ask("내일 휴일"), "할까요?", "네, 그렇게 해 주세요"],
+];
+for (const [r, ends, yes] of pairs2) check(`「${ends}」에는 「${yes}」`, r.text.includes(ends) && r.yes === yes, `${r.text} / ${r.yes}`);
+check("제안이 있는 답에는 늘 「네」 글이 있다", pairs2.every(([r]) => r.proposal && r.yes));
 
 console.log(`\n${checked - problems.length}/${checked}`);
 if (problems.length > 0) {
