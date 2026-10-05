@@ -6,6 +6,8 @@
  *
  *   토막    = 기록 칸이 이어진 덩어리. 출근 전 06~09시와 퇴근 뒤 18~21시는 서로 다른 토막이다.
  *   묻기    = 토막이 시작하기 10분 전(휴일 첫 토막은 30분 전) 「남으세요?」. 답이 없으면 칸 알림은 그대로 울린다.
+ *   받는 때 = 사람이 정한 알림 받는 시간(기본 하루 종일). 그 밖의 칸 · 요약은 울리지 않고, 묻기 · 다음 날은 받는 시간
+ *             시작으로 미룬다. 사전신청을 넉넉히 올려 두어도 자는 새벽에 울리지 않게 하려는 것이다.
  *   칸      = [확인] 칸마다 `nudgeAt` 시각. 「눌렀어요」 한 칸, 「안 남아요」 한 토막, 「오늘은 끝났어요」 뒤 칸은 울리지 않는다.
  *   요약    = 마지막으로 남은 토막이 끝나고 10분 뒤. 「오늘은 끝났어요」를 누른 날은 없다.
  *   다음 날 = 09:10 확인자료(지금과 같음). 「올렸어요」를 누르면 그날이 닫힌다.
@@ -59,6 +61,33 @@ export type AlarmEvent =
 /** 묻는 때. 토막 시작 몇 분 전. */
 export const ASK_BEFORE = 10;
 export const ASK_BEFORE_HOLIDAY = 30;
+
+/** 사람이 고르는 알림 설정. 이 기기에만 남는다. */
+export interface AlarmPrefs {
+  /** 알림 받는 시간(그날의 분). from 이상 to 미만에만 울린다. */
+  from: number;
+  to: number;
+  /** 「남으세요?」를 토막 시작 몇 분 전에 묻나. 0 이면 시작할 때. 휴일 첫 토막은 이보다 이르면 30분 전. */
+  askBefore: number;
+  /** false 면 소리 · 진동 없이 뜨기만 한다(앱). */
+  sound: boolean;
+}
+
+export const DEFAULT_PREFS: AlarmPrefs = { from: 0, to: 24 * HOUR, askBefore: ASK_BEFORE, sound: true };
+
+/** 저장된 값을 읽는다. 틀린 값은 기본으로. */
+export function readPrefs(value: unknown): AlarmPrefs {
+  if (!value || typeof value !== "object") return DEFAULT_PREFS;
+  const v = value as Partial<Record<keyof AlarmPrefs, unknown>>;
+  const minute = (x: unknown) => Number.isInteger(x) && (x as number) >= 0 && (x as number) <= 24 * HOUR;
+  const range = minute(v.from) && minute(v.to) && (v.from as number) < (v.to as number);
+  return {
+    from: range ? (v.from as number) : DEFAULT_PREFS.from,
+    to: range ? (v.to as number) : DEFAULT_PREFS.to,
+    askBefore: Number.isInteger(v.askBefore) && (v.askBefore as number) >= 0 && (v.askBefore as number) <= 120 ? (v.askBefore as number) : ASK_BEFORE,
+    sound: typeof v.sound === "boolean" ? v.sound : true,
+  };
+}
 /** 요약은 토막이 끝나고 몇 분 뒤. */
 export const SUM_AFTER = 10;
 
@@ -89,32 +118,40 @@ function alive(note: DayNote, seg: Segment): boolean {
 }
 
 /** 맡길 알림. 아직 안 지난 것만, 시각 순으로. */
-export function jobsOf(days: Record<string, DayNote>, now: number): AlarmJob[] {
+export function jobsOf(days: Record<string, DayNote>, now: number, prefs: AlarmPrefs = DEFAULT_PREFS): AlarmJob[] {
   const jobs: AlarmJob[] = [];
   const push = (job: AlarmJob) => {
     if (job.at > now) jobs.push(job);
   };
+  const inside = (minute: number) => minute >= prefs.from && minute < prefs.to;
 
   for (const [date, note] of Object.entries(days)) {
     if (note.done) continue;
     const segments = segmentsOf(note);
-    const live = segments.filter((s) => alive(note, s));
+    // 받는 시간과 한 칸도 안 겹치는 토막은 통째로 조용히 둔다.
+    const live = segments.filter((s) => alive(note, s) && s.until * HOUR > prefs.from && s.first * HOUR < prefs.to);
 
     live.forEach((seg) => {
       if (!note.stay?.includes(seg.first)) {
-        const before = note.holiday && seg === segments[0] ? ASK_BEFORE_HOLIDAY : ASK_BEFORE;
-        push({ at: kstAt(date, seg.first * HOUR - before), kind: "ask", date, hour: seg.first, until: seg.until });
+        const before = note.holiday && seg === segments[0] ? Math.max(prefs.askBefore, ASK_BEFORE_HOLIDAY) : prefs.askBefore;
+        // 받는 시간 전이면 받는 시간 시작으로 미룬다. 토막이 그 전에 끝나면 묻지 않는다.
+        const ask = Math.max(seg.first * HOUR - before, prefs.from);
+        if (ask < seg.until * HOUR && ask < prefs.to) {
+          push({ at: kstAt(date, ask), kind: "ask", date, hour: seg.first, until: seg.until });
+        }
       }
       for (const c of note.clicks) {
         if (c.hour < seg.first || c.hour >= seg.until) continue;
         if (note.pressed?.includes(c.hour)) continue;
         if (note.endedAt !== undefined && c.at >= note.endedAt) continue;
+        if (!inside(c.at)) continue;
         push({ at: kstAt(date, c.at), kind: "slot", hour: c.hour, date });
       }
     });
 
-    if (live.length > 0 && note.endedAt === undefined) {
-      const end = live[live.length - 1].until * HOUR + SUM_AFTER;
+    const end = live.length > 0 ? live[live.length - 1].until * HOUR + SUM_AFTER : -1;
+    // 받는 시간이 하루 끝까지면 자정 넘어 10분 요약도 보낸다.
+    if (live.length > 0 && note.endedAt === undefined && (inside(end) || (prefs.to === 24 * HOUR && end >= prefs.from))) {
       push({
         at: kstAt(date, end),
         kind: "sum",
@@ -125,7 +162,8 @@ export function jobsOf(days: Record<string, DayNote>, now: number): AlarmJob[] {
       });
     }
 
-    push({ at: kstAt(nextDate(date), DAY_NUDGE), kind: "day", date });
+    // 다음 날 09:10. 받는 시간 밖이면 받는 시간 안쪽 가장 가까운 때로.
+    push({ at: kstAt(nextDate(date), Math.min(Math.max(DAY_NUDGE, prefs.from), prefs.to - 1)), kind: "day", date });
   }
   return jobs.sort((a, b) => a.at - b.at);
 }

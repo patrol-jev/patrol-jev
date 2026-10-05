@@ -89,11 +89,11 @@ async function currentSub(): Promise<PushSubscription | null> {
   return (await reg?.pushManager.getSubscription()) ?? null;
 }
 
-/** 이 기기의 알림을 통째로 맞춘다. 빈 목록이면 서버에서 지워진다. */
-export async function syncJobs(id: string, jobs: PushJob[]): Promise<boolean> {
+/** 이 기기의 알림을 통째로 맞춘다. 빈 목록이면 서버에서 지워진다. `sound` 는 앱만 따른다(브라우저 알림 소리는 폰 설정을 따름). */
+export async function syncJobs(id: string, jobs: PushJob[], sound = true): Promise<boolean> {
   const native = nativeAlarm();
   if (native) {
-    const got = await native.postMessage({ op: "sync", jobs }).catch(() => undefined);
+    const got = await native.postMessage({ op: "sync", jobs, sound }).catch(() => undefined);
     return got?.ok === true;
   }
   const sub = await currentSub();

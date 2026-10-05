@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { applyEvents, jobsOf, segmentsOf, type DayForm, type DayNote } from "@/core/overtime/alarms";
+import { applyEvents, DEFAULT_PREFS, jobsOf, readPrefs, segmentsOf, type AlarmPrefs, type DayForm, type DayNote } from "@/core/overtime/alarms";
 import { FAQ, SOURCES } from "@/core/overtime/faq";
 import {
   dayLabel,
@@ -63,6 +63,7 @@ interface Stored {
   base: TextRange;
   days: Record<string, DayNote>;
   alarm: string | null;
+  prefs: AlarmPrefs;
 }
 
 const PRESETS: TextRange[] = [
@@ -80,7 +81,7 @@ const KIND_LABEL: Record<GapKind, string> = {
 };
 
 function readStore(): Stored {
-  const empty: Stored = { base: PRESETS[0], days: {}, alarm: null };
+  const empty: Stored = { base: PRESETS[0], days: {}, alarm: null, prefs: DEFAULT_PREFS };
   try {
     const raw = localStorage.getItem(STORE);
     if (!raw) return empty;
@@ -91,7 +92,7 @@ function readStore(): Stored {
     for (const [d, n] of Object.entries(got.days && typeof got.days === "object" ? got.days : {})) {
       if (/^\d{4}-\d{2}-\d{2}$/.test(d) && kstAt(d, 0) >= oldest) days[d] = n;
     }
-    return { base, days, alarm: typeof got.alarm === "string" ? got.alarm : null };
+    return { base, days, alarm: typeof got.alarm === "string" ? got.alarm : null, prefs: readPrefs(got.prefs) };
   } catch {
     // 저장소를 못 쓰는 창(사생활 보호 등)이어도 화면은 돈다.
     return empty;
@@ -164,6 +165,7 @@ function Board() {
   const [gaps, setGaps] = useState<TextGap[]>(() => opened?.form?.gaps ?? []);
   const [days, setDays] = useState<Record<string, DayNote>>(first.days);
   const [alarm, setAlarm] = useState<string | null>(first.alarm);
+  const [prefs, setPrefs] = useState<AlarmPrefs>(first.prefs);
   const [ready] = useState<PushReady>(pushReady);
   const [native] = useState(isNativeAlarm);
   const [alarmNote, setAlarmNote] = useState<string | null>(null);
@@ -211,7 +213,7 @@ function Board() {
     setDays(next);
   };
 
-  useEffect(() => writeStore({ base, days: shown, alarm }), [base, shown, alarm]);
+  useEffect(() => writeStore({ base, days: shown, alarm, prefs }), [base, shown, alarm, prefs]);
 
   // 앱의 알림 단추로 받은 답을 합친다. 화면을 열 때와 다시 앞으로 올 때. 다 받기 전에는 목록을 맞추지 않는다
   // (앱에서 「안 남아요」 한 토막을 옛 목록으로 되살리지 않게).
@@ -237,11 +239,11 @@ function Board() {
     if (!alarm || !taken) return;
     if (syncTimer.current) clearTimeout(syncTimer.current);
     syncTimer.current = setTimeout(() => {
-      void syncJobs(alarm, jobsOf(shown, Date.now())).then((ok) => {
+      void syncJobs(alarm, jobsOf(shown, Date.now(), prefs), prefs.sound).then((ok) => {
         if (!ok) setAlarmNote("알림을 맞추지 못했습니다. 잠시 뒤 다시 열어 주세요.");
       });
     }, 1200);
-  }, [alarm, shown, taken]);
+  }, [alarm, shown, taken, prefs]);
 
   const turnOn = useCallback(async () => {
     setBusy(true);
@@ -610,7 +612,7 @@ function Board() {
               )}
             </div>
 
-            <Alarm ready={ready} native={native} on={alarm !== null} busy={busy} note={alarmNote} onOn={turnOn} onOff={turnOff} />
+            <Alarm prefs={prefs} onPrefs={setPrefs} ready={ready} native={native} on={alarm !== null} busy={busy} note={alarmNote} onOn={turnOn} onOff={turnOff} />
 
             <Checklist />
           </section>
@@ -721,6 +723,8 @@ function Remove({ onClick }: { onClick: () => void }) {
 }
 
 function Alarm({
+  prefs,
+  onPrefs,
   ready,
   native,
   on,
@@ -729,6 +733,8 @@ function Alarm({
   onOn,
   onOff,
 }: {
+  prefs: AlarmPrefs;
+  onPrefs: (p: AlarmPrefs) => void;
   ready: PushReady;
   native: boolean;
   on: boolean;
@@ -764,6 +770,7 @@ function Alarm({
           {native && " 앱에서는 토막 10분 전에 「남으세요?」를 묻고, 끝나면 하루 요약을 보냅니다. 알림 단추로 「눌렀어요」 · 「10분 뒤」 · 「오늘은 끝났어요」를 고릅니다."}
         </span>
       </div>
+      {on && <AlarmPrefsBox prefs={prefs} onPrefs={onPrefs} native={native} />}
       {ready === "install" && !on && (
         <p className="text-[11px] text-[var(--muted)]">아이폰은 공유 → 「홈 화면에 추가」 한 뒤, 홈 화면의 초과기록에서 켭니다.</p>
       )}
@@ -772,6 +779,66 @@ function Alarm({
         <p className="text-[11px]" style={{ color: REASON }}>
           {note}
         </p>
+      )}
+    </div>
+  );
+}
+
+/** 알림 설정. 받는 시간 · 묻는 때 · 소리. 고치면 맡긴 목록이 바로 다시 맞춰진다. */
+function AlarmPrefsBox({ prefs, onPrefs, native }: { prefs: AlarmPrefs; onPrefs: (p: AlarmPrefs) => void; native: boolean }) {
+  const range = { from: hhmm(prefs.from), to: hhmm(prefs.to) };
+  const setRange = (v: TextRange) => {
+    const from = parseHhmm(v.from);
+    const to = parseHhmm(v.to);
+    if (from !== null && to !== null && from < to) onPrefs({ ...prefs, from, to });
+  };
+  const chip = (on: boolean) => ({ borderColor: on ? "var(--ink)" : "var(--line)", color: on ? "var(--ink)" : "var(--muted)" });
+  const windows: Array<[string, number, number]> = [
+    ["하루 종일", 0, 24 * 60],
+    ["07:00~23:00", 7 * 60, 23 * 60],
+    ["08:00~22:00", 8 * 60, 22 * 60],
+  ];
+  const asks: Array<[string, number]> = [
+    ["30분 전", 30],
+    ["10분 전", 10],
+    ["시작할 때", 0],
+  ];
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-[var(--line)] px-3 py-2.5 text-[12px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="w-[84px] shrink-0 text-[var(--muted)]">받는 시간</span>
+        <TimePair value={range} onChange={setRange} />
+        {windows.map(([label, from, to]) => (
+          <button key={label} onClick={() => onPrefs({ ...prefs, from, to })} className="rounded-md border px-2 py-1 text-[11px] tnum" style={chip(prefs.from === from && prefs.to === to)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-[var(--muted)]">
+        이 시간 밖의 칸 알림은 울리지 않습니다. 「남으세요?」와 다음 날 알림은 받는 시간이 시작할 때로 미룹니다. 사전신청을 넉넉히 올려 두었다면 새벽에 울리지 않게 시작을 늦춥니다.
+      </p>
+      {native && (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="w-[84px] shrink-0 text-[var(--muted)]">「남으세요?」</span>
+            {asks.map(([label, before]) => (
+              <button key={label} onClick={() => onPrefs({ ...prefs, askBefore: before })} className="rounded-md border px-2 py-1 text-[11px]" style={chip(prefs.askBefore === before)}>
+                {label}
+              </button>
+            ))}
+            <span className="text-[11px] text-[var(--muted)]">토막(이어진 칸)이 시작하기 전에 묻습니다. 휴일 첫 토막은 30분 전.</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="w-[84px] shrink-0 text-[var(--muted)]">소리</span>
+            <button onClick={() => onPrefs({ ...prefs, sound: true })} className="rounded-md border px-2 py-1 text-[11px]" style={chip(prefs.sound)}>
+              소리 · 진동
+            </button>
+            <button onClick={() => onPrefs({ ...prefs, sound: false })} className="rounded-md border px-2 py-1 text-[11px]" style={chip(!prefs.sound)}>
+              무음
+            </button>
+            <span className="text-[11px] text-[var(--muted)]">무음이면 화면에 뜨기만 하고, 회의 · 방해 금지 중에는 알림 목록에만 쌓입니다.</span>
+          </div>
+        </>
       )}
     </div>
   );

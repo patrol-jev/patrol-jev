@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { dayLabel, isRecordHour, isWeekend, kstAt, kstToday, nextDate, nudgeAt, parseHhmm, planDay, readTyped } from "../src/core/overtime/plan.ts";
 import { FAQ, SOURCES } from "../src/core/overtime/faq.ts";
-import { applyEvents, jobsOf, readEvents, segmentsOf } from "../src/core/overtime/alarms.ts";
+import { applyEvents, DEFAULT_PREFS, jobsOf, readEvents, readPrefs, segmentsOf } from "../src/core/overtime/alarms.ts";
 
 const vapid = createECDH("prime256v1");
 vapid.generateKeys();
@@ -250,6 +250,7 @@ const clock = (job) => {
   return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 };
 const list = (days, now = midnight0) => jobsOf(days, now).map((j) => `${j.kind}${j.hour ?? ""}@${j.kind === "day" ? j.date : clock(j)}`);
+const list2 = (days, prefs) => jobsOf(days, midnight0, prefs).map((j) => `${j.kind}${j.hour ?? ""}@${j.kind === "day" ? j.date : clock(j)}`);
 
 const segs = segmentsOf(dawnEve);
 check("06~21 신청은 출근 전·퇴근 뒤 두 토막", segs.length === 2 && segs[0].first === 6 && segs[0].until === 9 && segs[1].first === 18 && segs[1].until === 21, JSON.stringify(segs));
@@ -316,6 +317,30 @@ const readBack = readEvents([
 check("앱이 넘긴 답에서 틀린 줄은 버린다", readBack.length === 2 && readBack[0].op === "done" && readBack[1].op === "uploaded", JSON.stringify(readBack));
 const serverJobs = push.readJobs(jobsOf({ [D]: dawnEve }, midnight0), midnight0);
 check("웹 푸시 서버는 묻기·요약을 버리고 칸·다음 날만 맡는다", serverJobs.every((j) => j.kind === "slot" || j.kind === "day") && serverJobs.length === 6, String(serverJobs.length));
+
+// ⑯ 알림 설정: 받는 시간 · 묻는 때
+const P = (over) => ({ ...DEFAULT_PREFS, ...over });
+const morning7 = list2({ [D]: dawnEve }, P({ from: 7 * 60, to: 23 * 60 }));
+check(
+  "받는 시간 07:00~ 이면 새벽 묻기는 07:00 으로 미루고 06:30 칸은 울리지 않는다",
+  morning7.join(",") === "ask6@07:00,slot7@07:30,slot8@08:30,ask18@17:50,slot19@19:30,slot20@20:30,sum@21:10,day@2026-10-07",
+  morning7.join(","),
+);
+const morning9 = list2({ [D]: dawnEve }, P({ from: 9 * 60, to: 23 * 60 }));
+check("받는 시간 전에 끝나는 토막은 통째로 조용하다", !morning9.some((j) => /ask6|slot6|slot7|slot8/.test(j)) && morning9[0] === "ask18@17:50", morning9.join(","));
+const night = list2({ [D]: dawnEve }, P({ from: 7 * 60, to: 20 * 60 }));
+check("받는 시간 뒤의 칸과 요약은 울리지 않는다", !night.some((j) => /slot20|sum/.test(j)) && night.includes("slot19@19:30"), night.join(","));
+const late10 = jobsOf({ [D]: dawnEve }, midnight0, P({ from: 10 * 60, to: 23 * 60 })).find((j) => j.kind === "day");
+check("다음 날 알림도 받는 시간 시작으로 미룬다", late10.at === kstAt("2026-10-08", 10 * 60));
+const ask30 = list2({ [D]: dawnEve }, P({ askBefore: 30 }));
+const ask0 = list2({ [D]: dawnEve }, P({ askBefore: 0 }));
+check("「남으세요?」 30분 전 / 시작할 때", ask30.includes("ask18@17:30") && ask0.includes("ask18@18:00"), `${ask30.join(",")} | ${ask0.join(",")}`);
+const holStart = list2({ [D]: { ...dawnEve, holiday: true } }, P({ askBefore: 0 }));
+check("휴일 첫 토막은 고른 때보다 이르게 30분 전", holStart[0] === "ask6@05:30" && holStart.includes("ask18@18:00"), holStart.join(","));
+const lateNight = noteFrom(planDay(day({ spans: [r("21:00", "24:00")] })));
+check("하루 종일이면 자정에 끝나는 날도 요약(00:10)", jobsOf({ [D]: lateNight }, midnight0).some((j) => j.kind === "sum" && j.at === kstAt("2026-10-08", 10)));
+check("저장된 설정이 틀리면 기본으로", JSON.stringify(readPrefs({ from: 600, to: 300, askBefore: -5, sound: "no" })) === JSON.stringify(DEFAULT_PREFS));
+check("저장된 설정을 읽는다", JSON.stringify(readPrefs({ from: 420, to: 1380, askBefore: 30, sound: false })) === JSON.stringify({ from: 420, to: 1380, askBefore: 30, sound: false }));
 
 console.log(`\n${checked - problems.length}/${checked}`);
 if (problems.length > 0) {

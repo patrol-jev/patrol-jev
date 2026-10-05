@@ -32,6 +32,7 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
     private static let jobsKey = "overtimeAlarms"
     private static let snoozeKey = "overtimeSnoozes"
     private static let eventsKey = "overtimeEvents"
+    private static let soundKey = "overtimeSound"
     static let openNotification = Notification.Name("patrolOpenURL")
 
     enum Category {
@@ -200,8 +201,15 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    /// 소리 · 진동. 화면의 알림 설정에서 「무음」을 고르면 false.
+    private var sound: Bool {
+        get { defaults.object(forKey: Self.soundKey) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Self.soundKey) }
+    }
+
     /// 목록을 통째로 바꾸고 다시 건다. 빈 목록이면 이 앱이 건 초과기록 알림이 모두 사라진다.
-    func replace(_ next: [Job], done: @escaping (Int) -> Void) {
+    func replace(_ next: [Job], sound: Bool = true, done: @escaping (Int) -> Void) {
+        self.sound = sound
         jobs = next
         arm(done: done)
     }
@@ -233,25 +241,27 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
         if snoozed.count != snoozes.count { snoozes = snoozed }
         let wanted = Array((upcoming + snoozed).sorted { $0.at < $1.at }.prefix(Self.armLimit))
         let answered = events
+        let sound = self.sound
 
         center.getPendingNotificationRequests { pending in
             let ours = pending.map(\.identifier).filter { $0.hasPrefix(Self.prefix) }
             self.center.removePendingNotificationRequests(withIdentifiers: ours)
             for job in wanted {
-                self.center.add(self.request(for: job, answered: answered))
+                self.center.add(self.request(for: job, answered: answered, sound: sound))
             }
             DispatchQueue.main.async { done?(wanted.count) }
         }
     }
 
-    private func request(for job: Job, answered: [Event]) -> UNNotificationRequest {
+    private func request(for job: Job, answered: [Event], sound: Bool) -> UNNotificationRequest {
         let content = UNMutableNotificationContent()
         content.title = "초과기록"
         content.body = Self.body(of: job, answered: answered)
-        content.sound = .default
+        // 무음이면 소리도 진동도 없이 뜨기만 한다. 집중 모드도 뚫지 않는다.
+        content.sound = sound ? .default : nil
         content.threadIdentifier = "overtime"
         // 회의 · 방해 금지 중에도 칸 알림은 오게 한다. 권한(entitlement)이 없는 빌드에서는 보통 알림으로 온다.
-        content.interruptionLevel = job.kind == "sum" ? .active : .timeSensitive
+        content.interruptionLevel = job.kind == "sum" || !sound ? .active : .timeSensitive
         content.categoryIdentifier = Self.category(of: job)
         var info: [String: Any] = ["path": "/overtime", "kind": job.kind, "date": job.date]
         if let hour = job.hour { info["hour"] = hour }
@@ -435,7 +445,7 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
 /// 웹 화면과 이어지는 통로. 이 사이트의 맨 위 화면에서 온 말만 듣는다.
 ///
 ///   { op: "enable" }          → 권한을 묻는다. { ok, why }
-///   { op: "sync", jobs: [] }  → 울릴 목록을 통째로 바꾼다. { ok, armed }
+///   { op: "sync", jobs: [], sound }  → 울릴 목록을 통째로 바꾼다. sound 가 false 면 무음. { ok, armed }
 ///   { op: "take" }            → 알림 단추로 받은 답을 넘기고 지운다. { ok, events }
 ///   { op: "off" }             → 모두 지운다. { ok }
 final class AlarmBridge: NSObject, WKScriptMessageHandlerWithReply {
@@ -456,7 +466,7 @@ final class AlarmBridge: NSObject, WKScriptMessageHandlerWithReply {
                 replyHandler(["ok": ok, "why": why ?? ""], nil)
             }
         case "sync":
-            AlarmCenter.shared.replace(AlarmCenter.read(body["jobs"])) { armed in
+            AlarmCenter.shared.replace(AlarmCenter.read(body["jobs"]), sound: body["sound"] as? Bool ?? true) { armed in
                 replyHandler(["ok": true, "armed": armed], nil)
             }
         case "take":
