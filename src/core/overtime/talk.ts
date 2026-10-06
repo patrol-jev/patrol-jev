@@ -52,6 +52,10 @@ export interface Line {
 export const BASIC =
   "초과가 걸린 시간에는 한 시간 칸마다 인사랑 [근무기록] → [확인]을 한 번 눌러요. 지문과 퇴근확인은 그대로 따로 해요. 못 누른 칸은 미기록 사유를 쓰고, 확인자료는 다음 날 날짜별로 한 건씩 올려요.";
 
+/** 「오늘 초과 끝」 뒤의 말. 퇴근확인(지문)을 해야 초과로 인정된다(사용 안내, 묻고 답하기 「퇴근확인은 여전히 해야 하나요?」). */
+export const END_TEXT = "오늘은 여기까지예요. 퇴근 지문 잊지 마세요.";
+export const END_SUB = "퇴근확인(지문)을 찍어야 초과가 인정돼요. 남은 칸 알림은 멈췄어요.";
+
 /** 알림을 켜자는 말. 화면에서는 눌러서 바로 켜는 라벨이다. */
 export const ALARM_OFF = "알림을 켜 두면 칸마다 제가 챙길게요.";
 
@@ -113,8 +117,9 @@ export function lineOf(input: TalkInput): Line {
     const ahead = live.filter((s) => s.until * HOUR > minute);
     const some = segments.some((s) => [...Array(s.until - s.first)].some((_, i) => gone.has(s.first + i)));
 
-    if (ended || (segments.length > 0 && live.length === 0) || (ahead.length === 0 && some)) {
-      return { text: "오늘은 여기까지예요. 나머지 칸은 안 울릴게요.", sub: "내일 아침에 확인자료 올릴 차례를 알려 드릴게요." };
+    if (ended) return { text: END_TEXT, sub: END_SUB };
+    if ((segments.length > 0 && live.length === 0) || (ahead.length === 0 && some)) {
+      return { text: "오늘은 여기까지예요. 나머지 칸은 안 울릴게요.", sub: "내일 근무시간에 확인자료 올릴 차례를 알려 드릴게요." };
     }
 
     const hour = Math.floor(minute / HOUR);
@@ -158,7 +163,7 @@ export function lineOf(input: TalkInput): Line {
 
     return {
       text: "오늘 칸은 다 지났어요. 수고하셨어요.",
-      sub: alarm ? "내일 아침에 확인자료 올릴 차례를 알려 드릴게요." : "내일 이 화면을 열면 확인자료 차례를 알려 드릴게요.",
+      sub: alarm ? "내일 근무시간에 확인자료 올릴 차례를 매시 알려 드릴게요." : "내일 이 화면을 열면 확인자료 차례를 알려 드릴게요.",
     };
   }
 

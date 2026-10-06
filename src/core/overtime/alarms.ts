@@ -13,12 +13,14 @@
  *             그 칸에서 누를 틈이 50분 전에 끝나면 울리지 않는다.
  *   지운 칸 = 사전신청은 걸렸는데 남지 않은 칸. 다음 날 「못 누른 칸(사유)」과 「안 남은 칸」을 가르려고 남긴다.
  *   요약    = 마지막으로 남은 토막이 끝나고 10분 뒤. 「오늘은 끝났어요」를 누른 날은 없다.
- *   다음 날 = 09:10 확인자료(지금과 같음). 「올렸어요」를 누르면 그날이 닫힌다.
+ *   다음 날 = 확인자료 올릴 차례. 다음 근무일(토 · 일 · 휴일 표의 날은 건너뜀)의 근무시간 동안 매시 10분(09:00~18:00 근무면
+ *             09:10 · 10:10 … 17:10). 「올렸어요」를 누를 때까지 근무일 사흘까지 이어 울린다. 근무시간은 그날 넣은 값(`form.base`).
  *
  * 앱의 알림 단추는 사람이 스스로 적는 메모일 뿐이다. 인사랑에 아무것도 보내지 않는다.
  */
 
-import { DAY_NUDGE, HOUR, kstAt, nextDate, type GapKind, type Range } from "./plan";
+import { isHoliday } from "./holidays";
+import { HOUR, kstAt, nextDate, parseHhmm, type GapKind, type Range } from "./plan";
 
 /** 화면에 넣은 값(글자 그대로). 남긴 날을 다시 열 때 되살린다. 알림 셈에는 쓰지 않고, 이 기기 밖으로 나가지 않는다. */
 export interface DayForm {
@@ -98,6 +100,32 @@ export function readPrefs(value: unknown): AlarmPrefs {
 export const SUM_AFTER = 10;
 /** 한 번 더 알림은 매시 몇 분에(정각 10분 전). */
 export const AGAIN_AT = 50;
+/** 확인자료 알림은 근무시간 매시 몇 분에. 출근해 자리에 앉은 뒤. */
+export const DAY_AT = 10;
+/** 「올렸어요」가 없으면 근무일 며칠까지 이어 울리나. */
+export const DAY_REPEAT = 3;
+
+/** 이 날 다음의 근무일 n개. 토 · 일과 휴일 표의 날은 건너뛴다. */
+export function workDaysAfter(date: string, n: number): string[] {
+  const out: string[] = [];
+  let d = date;
+  for (let i = 0; i < 31 && out.length < n; i++) {
+    d = nextDate(d);
+    if (!isHoliday(d)) out.push(d);
+  }
+  return out;
+}
+
+/** 확인자료 알림을 울릴 그날의 분. 근무시간 매시 10분, 받는 시간 안쪽만. 하나도 없으면 받는 시간 안쪽 가장 가까운 한 때. */
+export function dayNudges(note: Pick<DayNote, "form">, prefs: AlarmPrefs = DEFAULT_PREFS): number[] {
+  const from = parseHhmm(note.form?.base.from ?? "") ?? 9 * HOUR;
+  const to = parseHhmm(note.form?.base.to ?? "") ?? 18 * HOUR;
+  const out: number[] = [];
+  for (let m = from + DAY_AT; m < (to > from ? to : from + 9 * HOUR); m += HOUR) {
+    if (m >= prefs.from && m < prefs.to) out.push(m);
+  }
+  return out.length > 0 ? out : [Math.min(Math.max(from + DAY_AT, prefs.from), prefs.to - 1)];
+}
 
 export interface Segment {
   /** 첫 칸의 시. */
@@ -192,8 +220,10 @@ export function jobsOf(days: Record<string, DayNote>, now: number, prefs: AlarmP
       });
     }
 
-    // 다음 날 09:10. 받는 시간 밖이면 받는 시간 안쪽 가장 가까운 때로.
-    push({ at: kstAt(nextDate(date), Math.min(Math.max(DAY_NUDGE, prefs.from), prefs.to - 1)), kind: "day", date });
+    // 다음 근무일부터 근무시간 매시 10분. 「올렸어요」(done)를 누르면 위에서 이 날을 통째로 건너뛴다.
+    for (const d of workDaysAfter(date, DAY_REPEAT)) {
+      for (const minute of dayNudges(note, prefs)) push({ at: kstAt(d, minute), kind: "day", date });
+    }
   }
   return jobs.sort((a, b) => a.at - b.at);
 }

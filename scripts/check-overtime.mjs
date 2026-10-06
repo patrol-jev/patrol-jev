@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { dayLabel, isRecordHour, isWeekend, kstAt, kstToday, nextDate, nudgeAt, parseHhmm, planDay, readTyped } from "../src/core/overtime/plan.ts";
 import { FAQ, SOURCES } from "../src/core/overtime/faq.ts";
-import { applyEvents, DEFAULT_PREFS, jobsOf, offHoursOf, readEvents, readPrefs, segmentsOf } from "../src/core/overtime/alarms.ts";
+import { applyEvents, dayNudges, DEFAULT_PREFS, jobsOf, offHoursOf, readEvents, readPrefs, segmentsOf, workDaysAfter } from "../src/core/overtime/alarms.ts";
 import { ALARM_OFF, BASIC, lineOf, sentencesOf } from "../src/core/overtime/talk.ts";
 import { answer, readDate, replyTo, searchFaq, stepReply, STEPS } from "../src/core/overtime/chat.ts";
 import { holidayDates, holidayLabel, isHoliday } from "../src/core/overtime/holidays.ts";
@@ -252,8 +252,10 @@ const clock = (job) => {
   const m = Math.round((job.at - midnight0) / 60_000);
   return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 };
-const list = (days, now = midnight0) => jobsOf(days, now).map((j) => `${j.kind}${j.hour ?? ""}@${j.kind === "day" ? j.date : clock(j)}`);
-const list2 = (days, prefs) => jobsOf(days, midnight0, prefs).map((j) => `${j.kind}${j.hour ?? ""}@${j.kind === "day" ? j.date : clock(j)}`);
+// 확인자료(day) 알림은 근무시간 매시로 여럿이다. 이 줄 셈에는 그날 것 첫 하나만 보이고, 매시 셈은 ⑱ 에서 따로 본다.
+const once = (tokens) => tokens.filter((t, i) => !t.startsWith("day@") || tokens.indexOf(t) === i);
+const list = (days, now = midnight0) => once(jobsOf(days, now).map((j) => `${j.kind}${j.hour ?? ""}@${j.kind === "day" ? j.date : clock(j)}`));
+const list2 = (days, prefs) => once(jobsOf(days, midnight0, prefs).map((j) => `${j.kind}${j.hour ?? ""}@${j.kind === "day" ? j.date : clock(j)}`));
 
 const segs = segmentsOf(dawnEve);
 check("06~21 신청은 출근 전·퇴근 뒤 두 토막", segs.length === 2 && segs[0].first === 6 && segs[0].until === 9 && segs[1].first === 18 && segs[1].until === 21, JSON.stringify(segs));
@@ -320,7 +322,7 @@ const readBack = readEvents([
 ]);
 check("앱이 넘긴 답에서 틀린 줄은 버린다", readBack.length === 2 && readBack[0].op === "done" && readBack[1].op === "uploaded", JSON.stringify(readBack));
 const serverJobs = push.readJobs(jobsOf({ [D]: dawnEve }, midnight0), midnight0);
-check("웹 푸시 서버는 묻기·요약을 버리고 칸·다음 날만 맡는다", serverJobs.every((j) => j.kind === "slot" || j.kind === "day") && serverJobs.length === 11, String(serverJobs.length));
+check("웹 푸시 서버는 묻기·요약을 버리고 칸·다음 날만 맡는다", serverJobs.every((j) => j.kind === "slot" || j.kind === "day") && serverJobs.length === 37, String(serverJobs.length));
 
 // ⑯ 알림 설정: 받는 시간 · 묻는 때
 const P = (over) => ({ ...DEFAULT_PREFS, ...over });
@@ -335,7 +337,7 @@ check("받는 시간 전에 끝나는 토막은 통째로 조용하다", !mornin
 const night = list2({ [D]: dawnEve }, P({ from: 7 * 60, to: 20 * 60 }));
 check("받는 시간 뒤의 칸과 요약은 울리지 않는다", !night.some((j) => /slot20|sum/.test(j)) && night.includes("slot19@19:30"), night.join(","));
 const late10 = jobsOf({ [D]: dawnEve }, midnight0, P({ from: 10 * 60, to: 23 * 60 })).find((j) => j.kind === "day");
-check("다음 날 알림도 받는 시간 시작으로 미룬다", late10.at === kstAt("2026-10-08", 10 * 60));
+check("다음 날 알림은 받는 시간 안쪽의 매시 10분부터", late10.at === kstAt("2026-10-08", 10 * 60 + 10));
 const ask30 = list2({ [D]: dawnEve }, P({ askBefore: 30 }));
 const ask0 = list2({ [D]: dawnEve }, P({ askBefore: 0 }));
 check("「남으세요?」 30분 전 / 시작할 때", ask30.includes("ask18@17:30") && ask0.includes("ask18@18:00"), `${ask30.join(",")} | ${ask0.join(",")}`);
@@ -399,7 +401,7 @@ check(
 check("날짜의 점에서는 끊지 않는다", sentencesOf("어제 10/5(월) 초과 확인자료 올릴 차례예요.").length === 1);
 check("묻는 때 설정을 따른다", hear({ prefs: P({ askBefore: 30 }) }).sub === "17:30에 남으실지 여쭤볼게요.");
 const ended = hear({ now: at(D, "19:50"), days: { [D]: { ...dawnEve, endedAt: t("19:40") } } });
-check("「끝났어요」 뒤엔 여기까지", ended.text === "오늘은 여기까지예요. 나머지 칸은 안 울릴게요.", ended.text);
+check("「끝났어요」 뒤엔 여기까지 + 퇴근 지문", ended.text === "오늘은 여기까지예요. 퇴근 지문 잊지 마세요." && ended.sub.includes("퇴근확인(지문)을 찍어야 초과가 인정돼요"), ended.text);
 check("남은 토막을 「안 남아요」 했어도 여기까지", hear({ days: { [D]: { ...dawnEve, left: [18] } } }).text.startsWith("오늘은 여기까지"));
 check("다 지났으면 수고했다고", hear({ now: at(D, "22:00") }).text === "오늘 칸은 다 지났어요. 수고하셨어요.");
 const after = nextDate(D);
@@ -575,6 +577,20 @@ const endAsk = ask("오늘 초과 끝", savedToday);
 check("「오늘 초과 끝」 → 끝내기 제안", endAsk.proposal?.end === true && endAsk.yes === "네, 끝내 주세요", endAsk.text);
 check("「퇴근했어요」 · 「오늘은 끝났어요」도", ask("퇴근했어요", savedToday).proposal?.end === true && ask("오늘은 끝났어요", savedToday).proposal?.end === true);
 check("다른 날이거나 안 남긴 날은 끝낼 것이 없다", ask("초과 끝").proposal === undefined && ask("초과 끝", { date: "2026-10-08", saved: true }).proposal === undefined);
+
+// ⑱ 다음 날 확인자료: 근무시간 매시 10분, 다음 근무일부터 사흘, 「올렸어요」까지(2026-10-07)
+const dayJobs = jobsOf({ [D]: dawnEve }, midnight0).filter((j) => j.kind === "day");
+const dayAt = (j) => `${kstToday(j.at)} ${clock({ at: j.at - (kstAt(kstToday(j.at), 0) - midnight0) })}`;
+check("확인자료 알림은 근무시간 09:10~17:10 매시(하루 9번) × 근무일 3일", dayJobs.length === 27 && dayAt(dayJobs[0]) === "2026-10-08 09:10" && dayAt(dayJobs[8]) === "2026-10-08 17:10", dayJobs.slice(0, 2).map(dayAt).join());
+check("한글날(10/9)과 주말은 건너뛰고 10/8 · 10/12 · 10/13", [...new Set(dayJobs.map((j) => kstToday(j.at)))].join() === "2026-10-08,2026-10-12,2026-10-13");
+check("금요일 초과는 월요일부터", workDaysAfter("2026-10-16", 1).join() === "2026-10-19");
+check("근무 08:00~17:00 이면 08:10~16:10", dayNudges({ form: { base: { from: "08:00", to: "17:00" } } }).join() === [8, 9, 10, 11, 12, 13, 14, 15, 16].map((h) => h * 60 + 10).join());
+check("근무 09:30~18:30 이면 09:40~17:40", dayNudges({ form: { base: { from: "09:30", to: "18:30" } } })[0] === 9 * 60 + 40 && dayNudges({ form: { base: { from: "09:30", to: "18:30" } } }).length === 9);
+check("근무시간을 모르면 09:00~18:00 으로", dayNudges({}).length === 9 && dayNudges({})[0] === 9 * 60 + 10);
+check("「올렸어요」를 누른 날은 확인자료 알림이 하나도 없다", !jobsOf({ [D]: { ...dawnEve, done: true } }, midnight0).some((j) => j.kind === "day"));
+check("받는 시간이 근무시간과 안 겹치면 받는 시간 안쪽 한 때", dayNudges({}, P({ from: 20 * 60, to: 23 * 60 })).join() === String(20 * 60));
+const pushDay = push.readJobs(jobsOf({ [D]: dawnEve }, midnight0), midnight0).filter((j) => j.kind === "day");
+check("웹 푸시도 확인자료 알림을 매시 맡는다", pushDay.length === 27);
 
 console.log(`\n${checked - problems.length}/${checked}`);
 if (problems.length > 0) {

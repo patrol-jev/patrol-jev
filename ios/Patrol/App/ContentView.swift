@@ -38,5 +38,9 @@ struct ContentView: View {
         .onAppear {
             if let url = AlarmCenter.shared.takePendingOpen() { incoming = url }
         }
+        // 알림을 눌러 앞으로 올 때 위 소식을 놓쳤으면 여기서 가져간다.
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            if let url = AlarmCenter.shared.takePendingOpen() { incoming = url }
+        }
     }
 }

@@ -23,7 +23,7 @@ import {
 } from "@/core/overtime/plan";
 import { answer, EXAMPLES, QUESTION_EXAMPLES, replyTo, stepLine, stepReply, STEPS, type Proposal } from "@/core/overtime/chat";
 import { holidayLabel, isHoliday } from "@/core/overtime/holidays";
-import { ALARM_OFF, lineOf, sentencesOf, type Line } from "@/core/overtime/talk";
+import { ALARM_OFF, END_SUB, END_TEXT, lineOf, sentencesOf, type Line } from "@/core/overtime/talk";
 import { OvertimeClockMark } from "@/ui/overtime-mark";
 import { isNativeAlarm, newDeviceId, pushReady, subscribe, syncJobs, takeEvents, unsubscribe, type PushReady } from "./push-client";
 import "./overtime.css";
@@ -312,6 +312,13 @@ function Board() {
     if (!note || note.done || (note.endedAt !== undefined && note.endedAt <= nowMinute)) return;
     setDays({ ...shown, [today]: { ...note, endedAt: nowMinute } });
   };
+  /** 「오늘 초과 끝」 단추. 끝내고 무대(PJ)로 올라가 퇴근 지문을 챙긴다. */
+  const finishToday = () => {
+    endToday();
+    setTalk({ user: "", said: { text: END_TEXT, sub: END_SUB } });
+    setShot((n) => n + 1);
+    document.getElementById("ot-stage")?.scrollIntoView({ behavior: calm() ? "auto" : "smooth", block: "start" });
+  };
   /** 칸을 지우거나 되살린다. 사전신청만 걸리고 남지 않은 칸. `on` 이 없으면 뒤집는다. */
   const setCut = (hours: number[], on?: boolean, d: string = date) => {
     const note = shown[d];
@@ -398,7 +405,7 @@ function Board() {
     const said: Said = p.drop
       ? { text: `${dayLabel(day)} 초과를 뺐어요. 그날 알림도 멈췄어요.` }
       : p.end
-      ? { text: "오늘은 여기까지 할게요. 남은 칸 알림은 멈췄어요.", sub: "내일 아침에 확인자료 차례를 알려 드릴게요." }
+      ? { text: END_TEXT, sub: END_SUB }
       : p.cut
       ? { text: "지웠어요. 그 칸들은 안 남은 칸으로 둘게요.", sub: "다음 날 사유 쓸 칸에서 빠져요. 되돌리려면 칸 목록 아래에서 눌러 주세요." }
       : p.keep
@@ -552,6 +559,7 @@ function Board() {
       {tab === "today" ? (
         <>
           <Stage
+            id="ot-stage"
             said={talk?.said ?? line}
             user={talk?.user ?? null}
             onCloseTalk={() => setTalk(null)}
@@ -565,11 +573,7 @@ function Board() {
             acts={{
               onUploaded: markDone,
               onPress: (hour) => togglePressed(hour, today),
-              onEnd: () => {
-                endToday();
-                setTalk(null);
-                setShot((n) => n + 1);
-              },
+              onEnd: finishToday,
               onYes: approve,
               onNo: () => decline(),
               onChip: send,
@@ -776,7 +780,7 @@ function Board() {
                       {dayLabel(date)} 남김 ✓
                     </span>
                     {date === today && !ended && (
-                      <button type="button" onClick={endToday} className="ot-hint rounded-full px-3.5 py-1.5 text-[12.5px] font-medium">
+                      <button type="button" onClick={finishToday} className="ot-hint rounded-full px-3.5 py-1.5 text-[12.5px] font-medium">
                         오늘 초과 끝
                       </button>
                     )}
@@ -947,6 +951,7 @@ interface Acts {
  * 위 = PJ 의 말풍선, 가운데 = 시계 사진기, 그 아래 = 탭마다 다른 것(날짜 칩 등), 맨 아래 = 내가 한 말과 채팅 막대.
  */
 function Stage({
+  id,
   said,
   user,
   onCloseTalk,
@@ -960,6 +965,8 @@ function Stage({
   acts,
   children,
 }: {
+  /** 「오늘 초과 끝」 뒤 이 자리로 올라온다. 초과기록 탭의 무대에만. */
+  id?: string;
   said: Said;
   user: string | null;
   onCloseTalk: () => void;
@@ -984,7 +991,8 @@ function Stage({
         event.currentTarget.style.setProperty("--look-x", "0");
         event.currentTarget.style.setProperty("--look-y", "0");
       }}
-      className="ot-stage flex flex-col items-center justify-center gap-2 rounded-[28px] px-4 pb-5 pt-6"
+      id={id}
+      className="ot-stage flex scroll-mt-3 flex-col items-center justify-center gap-2 rounded-[28px] px-4 pb-5 pt-6"
       style={{ minHeight: tall ? 460 : undefined }}
     >
       <div className="ot-bubble w-full max-w-[460px] rounded-[20px] px-4 py-3.5" aria-live="polite" data-late={said.late ? "1" : undefined}>
@@ -1467,7 +1475,7 @@ function Alarm({
           </button>
         )}
         <span className="text-[11px] text-[var(--muted)]">
-          남긴 날의 [확인] 칸마다, 그리고 다음 날 아침 확인자료 올릴 때 울립니다.
+          남긴 날의 [확인] 칸마다, 그리고 다음 근무일에 「올렸어요」를 누를 때까지 근무시간 매시 10분에 울립니다.
           {native && " 앱에서는 토막 10분 전에 「남으세요?」를 묻고, 끝나면 하루 요약을 보냅니다. 알림 단추로 「눌렀어요」 · 「10분 뒤」 · 「오늘은 끝났어요」를 고릅니다."}
         </span>
       </div>
@@ -1527,7 +1535,7 @@ function AlarmPrefsBox({ prefs, onPrefs, native }: { prefs: AlarmPrefs; onPrefs:
         ))}
       </div>
       <p className="text-[11px] text-[var(--muted)]">
-        이 시간 밖의 칸 알림은 울리지 않습니다. 「남으세요?」와 다음 날 알림은 받는 시간이 시작할 때로 미룹니다. 사전신청을 넉넉히 올려 두었다면 새벽에 울리지 않게 시작을 늦춥니다.
+        이 시간 밖의 칸 알림은 울리지 않습니다. 「남으세요?」는 받는 시간이 시작할 때로 미루고, 다음 날 확인자료 알림은 받는 시간 안쪽의 근무시간에만 울립니다. 사전신청을 넉넉히 올려 두었다면 새벽에 울리지 않게 시작을 늦춥니다.
       </p>
       {native && (
         <>

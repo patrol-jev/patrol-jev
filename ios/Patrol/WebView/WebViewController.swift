@@ -31,6 +31,8 @@ final class WebViewHostController: UIViewController {
     private var webView: WKWebView!
     private var lastToken = 0
     private var lastIncoming: URL?
+    /// 화면이 아직 안 섰을 때 받은 주소. 알림을 눌러 앱이 처음 켜지면 대개 이렇다. 화면이 서면 첫 주소 대신 이것을 연다.
+    private var queuedIncoming: URL?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -75,7 +77,13 @@ final class WebViewHostController: UIViewController {
             object: nil
         )
 
-        loadStart()
+        if let url = queuedIncoming {
+            queuedIncoming = nil
+            lastIncoming = url
+            webView.load(URLRequest(url: url))
+        } else {
+            loadStart()
+        }
     }
 
     func reloadIfNeeded(token: Int) {
@@ -85,8 +93,13 @@ final class WebViewHostController: UIViewController {
     }
 
     /// 밖에서 받은 주소를 연다. 같은 주소를 두 번 받아도 한 번만 연다.
+    /// 화면이 아직 안 섰으면 버리지 않고 두었다가 `viewDidLoad` 에서 연다(전에는 여기서 버려져 첫 화면이 열렸다).
     func openIfNeeded(_ url: URL?) {
-        guard let url, url != lastIncoming, isViewLoaded else { return }
+        guard let url, url != lastIncoming else { return }
+        guard isViewLoaded else {
+            queuedIncoming = url
+            return
+        }
         lastIncoming = url
         webView.load(URLRequest(url: url))
     }

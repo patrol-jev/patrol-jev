@@ -284,8 +284,6 @@ export function nextDate(date: string): string {
   return kstToday(kstAt(date, 12 * HOUR) + DAY * 60_000);
 }
 
-/** 확인자료를 올릴 날(다음 날) 알림을 울릴 시각. 출근해 자리에 앉은 뒤. */
-export const DAY_NUDGE = 9 * HOUR + 10;
 
 /** "2026-10-01" → "10/1(목)". */
 export function dayLabel(date: string): string {
