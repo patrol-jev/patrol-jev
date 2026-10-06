@@ -291,3 +291,36 @@
     display: none;
   }
 }
+
+/* 칸 한 줄. 밀면 뒤의 「지우기」가 보인다. 앞면은 바탕을 채워 뒤를 가린다. 지운 칸은 칸 이름에 줄을 긋는다. */
+.ot-row {
+  background: var(--paper);
+  transition: transform 200ms ease-out;
+}
+.ot-row[data-cut="1"] > div:first-child {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.ot-row-back {
+  background: var(--wash);
+  color: var(--muted);
+}
+.ot-row-back[data-ready="1"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* 출근 전과 퇴근 후 사이의 근무 루프. 옅게. */
+.ot-loop {
+  stroke: var(--muted);
+  opacity: 0.45;
+}
+
+/* 정각 10분 전인데 아직 안 누른 칸. 한 번 더 알림(🟠)과 같은 뜻으로 말풍선 테두리만 주황. */
+.ot-bubble[data-late="1"] {
+  border-color: #d97706;
+  box-shadow: 0 6px 22px rgba(217, 119, 6, 0.14);
+}
+.ot-bubble[data-late="1"]::after {
+  border-color: #d97706;
+}

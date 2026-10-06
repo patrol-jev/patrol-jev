@@ -62,6 +62,10 @@ export interface Proposal {
   alarm?: boolean;
   /** 남긴 날을 뺀다(그날 알림도 멈춘다). */
   drop?: boolean;
+  /** 오늘 초과를 지금 끝낸다(남은 칸 알림이 멈춘다). */
+  end?: boolean;
+  /** 남긴 날의 오전(출근 전) · 오후(퇴근 후) 칸을 한 번에 지운다. 사전신청만 걸리고 안 남은 칸. */
+  cut?: "am" | "pm";
 }
 
 export interface Reply {
@@ -256,6 +260,16 @@ export function replyTo(message: string, ctx: ChatContext, last?: Proposal): Rep
       chips: ["6시~10시", "7시에 저녁 30분", ...(ctx.saved ? ["이 날 빼 줘"] : [])],
     };
   }
+  // 「초과 끝」 · 「오늘 끝났어」: 오늘 남은 칸 알림을 멈춘다. 「끝」만 물으면(「언제 끝나요?」) 아래 질문으로 간다.
+  if (/(초과|오늘)\s*(은|는)?\s*(끝|종료)|끝났|끝낼|끝내|퇴근했|퇴근할게|그만\s*할/.test(text) && !/\d/.test(text) && !QUESTION.test(text)) {
+    if (!ctx.saved || (ctx.date ?? ctx.today) !== ctx.today) return { text: "오늘 남긴 초과가 없어요. 끝낼 것이 없어요." };
+    return { text: "오늘 초과를 여기서 끝낼까요?", sub: "남은 칸 알림은 멈추고, 내일 확인자료 차례만 알려 드려요.", proposal: { end: true }, yes: "네, 끝내 주세요" };
+  }
+  // 「출근 전 지워」 · 「오후 칸 지워 줘」: 사전신청만 걸리고 안 남은 칸을 한 번에 지운다.
+  if (/지워|지우|빼\s*줘|빼\s*주세요|안\s*했|안\s*남았/.test(text) && !/\d/.test(text) && !kindOf(text)) {
+    const half = /오전|아침|새벽|출근\s*전/.test(text) ? "am" : /오후|저녁|밤|퇴근\s*후/.test(text) ? "pm" : null;
+    if (half) return ctx.saved ? cutReply(half, ctx) : { text: `${dayLabel(ctx.date ?? ctx.today)}은 아직 남기지 않은 날이에요. 지울 칸이 없어요.` };
+  }
   if (/빼\s*줘|빼\s*주세요|지워|삭제|안\s*남|취소해/.test(text) && !/\d/.test(text) && !kindOf(text)) {
     if (!ctx.saved) return { text: `${dayLabel(day)}은 아직 남기지 않은 날이에요. 뺄 것이 없어요.` };
     return { text: `${dayLabel(day)}에 남긴 초과를 뺄까요?`, sub: "그날 알림도 같이 멈춰요.", proposal: { drop: true }, yes: "네, 빼 주세요" };
@@ -406,6 +420,7 @@ function followUp(text: string, ctx: ChatContext, last: Proposal): Reply | null 
   const flip = /^(오전|아침|새벽|오후|저녁|밤)\s*(으로|로)?\s*(요|해\s*줘|해\s*주세요|이야|임|요\.?)?$/i.exec(words);
   if (flip) {
     const pm = /오후|저녁|밤/.test(flip[1]);
+    if (last.cut) return cutReply(pm ? "pm" : "am", ctx);
     const move = (r: TextRange): TextRange => {
       const from = parseHhmm(r.from) ?? 0;
       const to = parseHhmm(r.to) ?? 0;
@@ -462,6 +477,17 @@ function describe(p: Proposal, date: string, holiday: boolean, ctx: ChatContext)
   const text = what ? `${head ? `${head} ` : ""}${what}로 ${change ? "바꿀까요?" : "넣을까요?"}` : `${head}로 할까요?`;
   const yes = what ? (change ? "네, 바꿔 주세요" : "네, 넣어 주세요") : "네, 그렇게 해 주세요";
   return { text, sub, proposal: p, yes };
+}
+
+/** 오전(출근 전) · 오후(퇴근 후) 칸 지우기 제안. 평일은 「출근 전 · 퇴근 후」, 휴일은 「오전 · 오후」라고 부른다. */
+function cutReply(half: "am" | "pm", ctx: ChatContext): Reply {
+  const name = ctx.holiday ? (half === "am" ? "오전" : "오후") : half === "am" ? "출근 전" : "퇴근 후";
+  return {
+    text: `${dayLabel(ctx.date ?? ctx.today)} ${name} 칸을 지울까요?`,
+    sub: "사전신청만 걸리고 안 남은 칸으로 남겨요. 알림도 멈추고, 다음 날 사유 쓸 칸에서 빠져요.",
+    proposal: { cut: half },
+    yes: "네, 지워 주세요",
+  };
 }
 
 function toRange(r: TextRange): Range | null {

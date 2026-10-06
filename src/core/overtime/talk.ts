@@ -12,7 +12,7 @@
  * 말투는 「~예요 / ~할게요」, 짧게. 권하는 말은 하되 「일했는지」 판정하는 말은 하지 않는다. 긴 줄표를 쓰지 않는다.
  */
 
-import { DEFAULT_PREFS, jobsOf, segmentsOf, type AlarmPrefs, type DayNote } from "./alarms";
+import { AGAIN_AT, DEFAULT_PREFS, jobsOf, offHoursOf, segmentsOf, type AlarmPrefs, type DayNote } from "./alarms";
 import { dayLabel, HOUR, hhmm, kstAt, kstToday, nextDate, slotLabel } from "./plan";
 
 export interface TalkInput {
@@ -40,6 +40,12 @@ export interface Line {
   press?: number;
   /** 알림이 꺼져 있어 켜자고 권한다. 화면은 이 말(`ALARM_OFF`)을 눌러서 켜는 라벨로 그린다. */
   offer?: "alarm";
+  /** 「올렸어요」 단추 대신 쓸 글(다 지운 날은 올릴 것이 없어 「확인했어요」). */
+  close?: string;
+  /** 「오늘 초과 끝」 단추. 누르면 오늘 남은 알림이 멈춘다. */
+  end?: boolean;
+  /** 정각 10분 전인데 아직 안 누른 칸. 화면은 말풍선 테두리를 주황으로 그린다(한 번 더 알림과 같은 뜻). */
+  late?: boolean;
 }
 
 /** 기본 안내. 아무것도 안 남겼을 때. 화면은 문장마다 한 줄씩 차례로 친다(`sentencesOf`). */
@@ -69,16 +75,30 @@ export function lineOf(input: TalkInput): Line {
     const d = pending[0];
     const note = days[d];
     const when = nextDate(d) === today ? `어제 ${dayLabel(d)}` : dayLabel(d);
-    const hours = [...new Set([...note.reasons.map((r) => r.hour), ...(note.missed ?? [])])].sort((a, b) => a - b);
+    const more = pending.length > 1 ? ` 이런 날이 ${pending.length}일 남았어요.` : "";
+    // 지운 칸 · 안 남은 토막 · 끝낸 뒤 칸은 남지 않은 칸이다. 못 누른 칸(사유)과 섞지 않는다.
+    const gone = offHoursOf(note);
+    const all = [...new Set([...note.clicks.map((c) => c.hour), ...note.reasons.map((r) => r.hour)])].sort((a, b) => a - b);
+    const stayed = all.filter((h) => !gone.has(h));
+    const goneList = all.filter((h) => gone.has(h));
+    if (all.length > 0 && stayed.length === 0) {
+      return {
+        text: `${when} 초과는 다 지우셨어요. 남지 않은 날이에요.${more}`,
+        sub: "사전신청이 걸려 있었다면 어떻게 둘지는 기관 안내를 따라요.",
+        uploaded: d,
+        close: "확인했어요",
+      };
+    }
+    const hours = [...new Set([...note.reasons.map((r) => r.hour), ...(note.missed ?? [])])].filter((h) => !gone.has(h)).sort((a, b) => a - b);
     const sub =
       hours.length === 0
         ? "다 눌렀어도 날짜별로 한 건 올려요."
         : hours.length === 1
           ? `사유 쓸 칸은 ${slotLabel(hours[0])} 하나예요.`
           : `사유 쓸 칸은 ${hours.map(slotLabel).join(", ")} 모두 ${hours.length}칸이에요.`;
+    const left = goneList.length > 0 ? ` ${goneList.map(slotLabel).join(", ")}는 남지 않은 칸이에요.` : "";
     const off = note.exclusions.length > 0 ? ` 근무제외시간 ${note.exclusions.map((r) => `${hhmm(r.from)}~${hhmm(r.to)}`).join(", ")}도 넣어요.` : "";
-    const more = pending.length > 1 ? ` 이런 날이 ${pending.length}일 남았어요.` : "";
-    return { text: `${when} 초과 확인자료 올릴 차례예요.${more}`, sub: sub + off, uploaded: d };
+    return { text: `${when} 초과 확인자료 올릴 차례예요.${more}`, sub: sub + left + off, uploaded: d };
   }
 
   // 2. 오늘 남긴 날.
@@ -86,11 +106,14 @@ export function lineOf(input: TalkInput): Line {
   if (note && !note.done && (date === null || date === today)) {
     const minute = Math.floor((now - kstAt(today, 0)) / 60_000);
     const segments = segmentsOf(note);
-    const live = segments.filter((s) => !note.left?.includes(s.first));
+    // 꺼진 칸(안 남아요 · 끝낸 뒤 · 지운 칸)을 빼고 다시 묶는다.
+    const gone = offHoursOf(note);
+    const live = segmentsOf({ clicks: note.clicks.filter((c) => !gone.has(c.hour)), reasons: note.reasons.filter((r) => !gone.has(r.hour)) });
     const ended = note.endedAt !== undefined && minute >= note.endedAt;
     const ahead = live.filter((s) => s.until * HOUR > minute);
+    const some = segments.some((s) => [...Array(s.until - s.first)].some((_, i) => gone.has(s.first + i)));
 
-    if (ended || (segments.length > 0 && live.length === 0) || (ahead.length === 0 && live.length < segments.length)) {
+    if (ended || (segments.length > 0 && live.length === 0) || (ahead.length === 0 && some)) {
       return { text: "오늘은 여기까지예요. 나머지 칸은 안 울릴게요.", sub: "내일 아침에 확인자료 올릴 차례를 알려 드릴게요." };
     }
 
@@ -100,20 +123,24 @@ export function lineOf(input: TalkInput): Line {
       const click = note.clicks.find((c) => c.hour === hour);
       const reason = note.reasons.find((r) => r.hour === hour);
       if (click && !note.pressed?.includes(hour)) {
+        // 정각 10분 전. 한 번 더 알림과 같은 때라 말풍선도 주황 테두리로.
+        if (minute >= hour * HOUR + AGAIN_AT && click.at < hour * HOUR + AGAIN_AT) {
+          return { text: `${slotLabel(hour)} 칸이 10분 남았어요. 아직이면 [확인] 눌러 주세요.`, sub: "누르셨으면 아래 단추로 알려 주세요.", press: hour, late: true, end: true };
+        }
         const text =
           minute < click.at
             ? `지금 ${slotLabel(hour)} 칸이에요. ${hhmm(click.at)}쯤 [확인] 눌러 주세요.`
             : `지금 ${slotLabel(hour)} 칸이에요. [확인] 눌러 주세요.`;
-        return { text, sub: "누르셨으면 아래 단추로 알려 주세요. 그 칸 알림은 멈출게요.", press: hour };
+        return { text, sub: "누르셨으면 아래 단추로 알려 주세요. 그 칸 알림은 멈출게요.", press: hour, end: true };
       }
       if (click) {
         const next = note.clicks.find((c) => c.hour > hour && !note.pressed?.includes(c.hour) && live.some((s) => s.first <= c.hour && c.hour < s.until));
         return next
-          ? { text: `${slotLabel(hour)} 칸은 눌렀어요. 다음 ${slotLabel(next.hour)} 칸에 또 알려 드릴게요.` }
+          ? { text: `${slotLabel(hour)} 칸은 눌렀어요. 다음 ${slotLabel(next.hour)} 칸에 또 알려 드릴게요.`, end: true }
           : { text: `${slotLabel(hour)} 칸까지 눌렀어요. 오늘 누를 칸은 이게 마지막이에요.` };
       }
       if (reason) {
-        return { text: `지금 ${slotLabel(hour)} 칸은 [확인] 대신 사유를 쓰는 칸이에요.`, sub: `내일 미기록 사유에 「${reason.reason}」라고 적어요.` };
+        return { text: `지금 ${slotLabel(hour)} 칸은 [확인] 대신 사유를 쓰는 칸이에요.`, sub: `내일 미기록 사유에 「${reason.reason}」라고 적어요.`, end: true };
       }
     }
 
@@ -124,9 +151,9 @@ export function lineOf(input: TalkInput): Line {
       if (!alarm) return { text, offer: "alarm" };
       // 웹 알림에는 「남으세요?」가 없다. 앱이 아니면 첫 칸 알림만 본다.
       const job = jobsOf({ [today]: note }, now, prefs).find((j) => j.kind === "slot" || (native && j.kind === "ask"));
-      if (job?.kind === "ask") return { text, sub: `${hhmm(minuteOf(job.at, today))}에 남으실지 여쭤볼게요.` };
-      if (job?.kind === "slot") return { text, sub: `${hhmm(minuteOf(job.at, today))}쯤 [확인] 알림을 드릴게요.` };
-      return { text, sub: "칸마다 알려 드릴게요." };
+      if (job?.kind === "ask") return { text, sub: `${hhmm(minuteOf(job.at, today))}에 남으실지 여쭤볼게요.`, end: true };
+      if (job?.kind === "slot") return { text, sub: `${hhmm(minuteOf(job.at, today))}쯤 [확인] 알림을 드릴게요.`, end: true };
+      return { text, sub: "칸마다 알려 드릴게요.", end: true };
     }
 
     return {

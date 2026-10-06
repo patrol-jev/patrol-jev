@@ -24,7 +24,8 @@ export interface Subscription {
   keys: { p256dh: string; auth: string };
 }
 
-export type Job = { at: number; kind: "slot"; hour: number } | { at: number; kind: "day"; date: string };
+/** `again` = 정각 10분 전 한 번 더(아직 안 누른 칸). */
+export type Job = { at: number; kind: "slot"; hour: number; again?: true } | { at: number; kind: "day"; date: string };
 
 interface Entry {
   subscription: Subscription;
@@ -95,11 +96,11 @@ export function readJobs(value: unknown, now: number): Job[] {
   const out: Job[] = [];
   for (const raw of value.slice(0, MAX_JOBS * 2)) {
     if (!raw || typeof raw !== "object") continue;
-    const j = raw as { at?: unknown; kind?: unknown; hour?: unknown; date?: unknown };
+    const j = raw as { at?: unknown; kind?: unknown; hour?: unknown; date?: unknown; again?: unknown };
     if (typeof j.at !== "number" || !Number.isFinite(j.at)) continue;
     if (j.at <= now || j.at > now + MAX_AHEAD_MS) continue;
     if (j.kind === "slot" && Number.isInteger(j.hour) && (j.hour as number) >= 0 && (j.hour as number) < 24) {
-      out.push({ at: j.at, kind: "slot", hour: j.hour as number });
+      out.push(j.again === true ? { at: j.at, kind: "slot", hour: j.hour as number, again: true } : { at: j.at, kind: "slot", hour: j.hour as number });
     } else if (j.kind === "day" && typeof j.date === "string" && DATE.test(j.date)) {
       out.push({ at: j.at, kind: "day", date: j.date });
     }
@@ -111,9 +112,10 @@ export function readJobs(value: unknown, now: number): Job[] {
 /** 알림 글. 서버가 칸 번호와 날짜로만 만든다. */
 export function messageOf(job: Job): { title: string; body: string; tag: string; url: string } {
   if (job.kind === "slot") {
+    // 한 번 더 알림은 🟠 로 첫 알림과 다르게 보인다. 같은 칸 이름표라 앞 알림을 갈아 끼운다.
     return {
       title: "초과기록",
-      body: `${slotLabel(job.hour)} 칸 [확인]을 누를 때입니다.`,
+      body: job.again ? `🟠 ${slotLabel(job.hour)} 칸이 10분 남았습니다. 아직이면 [확인]을 누릅니다.` : `${slotLabel(job.hour)} 칸 [확인]을 누를 때입니다.`,
       tag: `slot-${job.hour}`,
       url: "/overtime",
     };

@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { dayLabel, isRecordHour, isWeekend, kstAt, kstToday, nextDate, nudgeAt, parseHhmm, planDay, readTyped } from "../src/core/overtime/plan.ts";
 import { FAQ, SOURCES } from "../src/core/overtime/faq.ts";
-import { applyEvents, DEFAULT_PREFS, jobsOf, readEvents, readPrefs, segmentsOf } from "../src/core/overtime/alarms.ts";
+import { applyEvents, DEFAULT_PREFS, jobsOf, offHoursOf, readEvents, readPrefs, segmentsOf } from "../src/core/overtime/alarms.ts";
 import { ALARM_OFF, BASIC, lineOf, sentencesOf } from "../src/core/overtime/talk.ts";
 import { answer, readDate, replyTo, searchFaq, stepReply, STEPS } from "../src/core/overtime/chat.ts";
 import { holidayDates, holidayLabel, isHoliday } from "../src/core/overtime/holidays.ts";
@@ -259,8 +259,9 @@ const segs = segmentsOf(dawnEve);
 check("06~21 신청은 출근 전·퇴근 뒤 두 토막", segs.length === 2 && segs[0].first === 6 && segs[0].until === 9 && segs[1].first === 18 && segs[1].until === 21, JSON.stringify(segs));
 const base0 = list({ [D]: dawnEve });
 check(
-  "묻기는 토막 10분 전, 칸은 권장 시각, 요약은 끝나고 10분 뒤, 다음 날 09:10",
-  base0.join(",") === "ask6@05:50,slot6@06:30,slot7@07:30,slot8@08:30,ask18@17:50,slot19@19:30,slot20@20:30,sum@21:10,day@2026-10-07",
+  "묻기는 토막 10분 전, 칸은 권장 시각과 50분, 요약은 끝나고 10분 뒤, 다음 날 09:10",
+  base0.join(",") ===
+    "ask6@05:50,slot6@06:30,slot6@06:50,slot7@07:30,slot7@07:50,slot8@08:30,slot8@08:50,ask18@17:50,slot19@19:30,slot19@19:50,slot20@20:30,slot20@20:50,sum@21:10,day@2026-10-07",
   base0.join(","),
 );
 check("식사로 비운 18시 칸은 알림 없음(사유 칸)", !base0.includes("slot18@18:30"));
@@ -286,7 +287,7 @@ const stay0 = list({ [D]: { ...dawnEve, stay: [18] } });
 check("「남아요」 한 토막은 다시 묻지 않는다", !stay0.includes("ask18@17:50") && stay0.includes("slot19@19:30"));
 
 const late0 = list({ [D]: dawnEve }, kstAt(D, 19 * 60 + 40));
-check("지난 알림은 빼고 넘긴다", late0.join(",") === "slot20@20:30,sum@21:10,day@2026-10-07", late0.join(","));
+check("지난 알림은 빼고 넘긴다", late0.join(",") === "slot19@19:50,slot20@20:30,slot20@20:50,sum@21:10,day@2026-10-07", late0.join(","));
 check("확인자료를 올린 날은 알림이 없다", jobsOf({ [D]: { ...dawnEve, done: true } }, midnight0).length === 0);
 
 const ev = applyEvents({ [D]: dawnEve }, [
@@ -319,14 +320,14 @@ const readBack = readEvents([
 ]);
 check("앱이 넘긴 답에서 틀린 줄은 버린다", readBack.length === 2 && readBack[0].op === "done" && readBack[1].op === "uploaded", JSON.stringify(readBack));
 const serverJobs = push.readJobs(jobsOf({ [D]: dawnEve }, midnight0), midnight0);
-check("웹 푸시 서버는 묻기·요약을 버리고 칸·다음 날만 맡는다", serverJobs.every((j) => j.kind === "slot" || j.kind === "day") && serverJobs.length === 6, String(serverJobs.length));
+check("웹 푸시 서버는 묻기·요약을 버리고 칸·다음 날만 맡는다", serverJobs.every((j) => j.kind === "slot" || j.kind === "day") && serverJobs.length === 11, String(serverJobs.length));
 
 // ⑯ 알림 설정: 받는 시간 · 묻는 때
 const P = (over) => ({ ...DEFAULT_PREFS, ...over });
 const morning7 = list2({ [D]: dawnEve }, P({ from: 7 * 60, to: 23 * 60 }));
 check(
   "받는 시간 07:00~ 이면 새벽 묻기는 07:00 으로 미루고 06:30 칸은 울리지 않는다",
-  morning7.join(",") === "ask6@07:00,slot7@07:30,slot8@08:30,ask18@17:50,slot19@19:30,slot20@20:30,sum@21:10,day@2026-10-07",
+  morning7.join(",") === "ask6@07:00,slot7@07:30,slot7@07:50,slot8@08:30,slot8@08:50,ask18@17:50,slot19@19:30,slot19@19:50,slot20@20:30,slot20@20:50,sum@21:10,day@2026-10-07",
   morning7.join(","),
 );
 const morning9 = list2({ [D]: dawnEve }, P({ from: 9 * 60, to: 23 * 60 }));
@@ -529,6 +530,51 @@ const pairs2 = [
 ];
 for (const [r, ends, yes] of pairs2) check(`「${ends}」에는 「${yes}」`, r.text.includes(ends) && r.yes === yes, `${r.text} / ${r.yes}`);
 check("제안이 있는 답에는 늘 「네」 글이 있다", pairs2.every(([r]) => r.proposal && r.yes));
+
+// ⑰ 정각 10분 전 한 번 더 · 지운 칸 · 오늘 초과 끝(2026-10-07)
+const again0 = jobsOf({ [D]: dawnEve }, midnight0).filter((j) => j.kind === "slot" && j.again);
+check("한 번 더 알림은 [확인] 칸마다 매시 50분", again0.map((j) => `${j.hour}@${clock(j)}`).join(",") === "6@06:50,7@07:50,8@08:50,19@19:50,20@20:50", again0.map((j) => j.hour).join());
+check("「눌렀어요」 한 칸은 50분 알림도 없다", !jobsOf({ [D]: { ...dawnEve, pressed: [19] } }, midnight0).some((j) => j.kind === "slot" && j.hour === 19));
+const short0 = { clicks: [{ hour: 18, at: 18 * 60 + 30, end: 18 * 60 + 40 }], reasons: [], exclusions: [], done: false };
+check("누를 틈이 50분 전에 끝나면 한 번 더는 없다", !list({ [D]: short0 }).includes("slot18@18:50") && list({ [D]: short0 }).includes("slot18@18:30"), list({ [D]: short0 }).join(","));
+const end45 = list({ [D]: { ...dawnEve, endedAt: 19 * 60 + 45 } });
+check("「끝났어요」 뒤의 50분 알림은 없다", end45.includes("slot19@19:30") && !end45.includes("slot19@19:50"), end45.join(","));
+const cutAm = jobsOf({ [D]: { ...dawnEve, cut: [6, 7, 8] } }, midnight0);
+check("출근 전 칸을 다 지우면 그 토막은 묻기 · 칸 알림이 없다", !cutAm.some((j) => (j.kind === "slot" || j.kind === "ask") && j.hour < 9) && cutAm.some((j) => j.kind === "ask" && j.hour === 18));
+check("지운 칸은 요약 칸 수에서 빠진다", cutAm.find((j) => j.kind === "sum").clicks === 2);
+const cut6 = list({ [D]: { ...dawnEve, cut: [6] } });
+check("앞 칸만 지우면 남은 첫 칸 앞에서 묻는다", cut6[0] === "ask7@06:50" && !cut6.some((j) => /slot6/.test(j)), cut6.join(","));
+check("「안 남아요」가 토막 가운데 칸으로 와도 토막 전체가 꺼진다", [...offHoursOf({ ...dawnEve, left: [7] })].sort((a, b) => a - b).join() === "6,7,8");
+const pushAgain = push.readJobs(jobsOf({ [D]: dawnEve }, midnight0), midnight0).find((j) => j.kind === "slot" && j.again);
+check("웹 푸시도 한 번 더를 맡고 🟠 로 다르게 쓴다", pushAgain && push.messageOf(pushAgain).body.startsWith("🟠") && !push.messageOf({ ...pushAgain, again: undefined }).body.startsWith("🟠"));
+
+const N = nextDate(D);
+const nextLine = (note) => lineOf({ now: at(N, "09:30"), days: { [D]: note }, date: null, draft: null, alarm: true, native: true });
+const partCut = nextLine({ ...dawnEve, cut: [19, 20] });
+check("다음 날: 지운 칸은 사유 쓸 칸에서 빼고 따로 말한다", partCut.sub.startsWith("사유 쓸 칸은 18~19시 하나예요.") && partCut.sub.includes("19~20시, 20~21시는 남지 않은 칸이에요."), partCut.sub);
+const allCut = nextLine({ ...dawnEve, cut: [6, 7, 8, 18, 19, 20] });
+check("다음 날: 다 지운 날은 「확인했어요」로 닫는다", allCut.text.includes("다 지우셨어요") && allCut.close === "확인했어요" && allCut.uploaded === D, allCut.text);
+const lateLine = say({ now: at(D, "19:52") });
+check("정각 10분 전인데 안 누른 칸이면 말풍선이 주황(late)", lateLine.late === true && lateLine.press === 19 && lateLine.text.includes("10분 남았어요"), lateLine.text);
+check("50분 전에는 late 가 아니다", say({ now: at(D, "19:35") }).late === undefined);
+check("오늘 칸이 남아 있으면 「오늘 초과 끝」 단추", say({ now: at(D, "19:10") }).end === true && say({ now: at(D, "12:00") }).end === true);
+const endedLine = say({ now: at(D, "19:10"), days: { [D]: { ...dawnEve, endedAt: 19 * 60 + 5 } } });
+check("끝낸 뒤에는 「여기까지」, 단추 없음", endedLine.text.startsWith("오늘은 여기까지예요.") && endedLine.end === undefined, endedLine.text);
+const cutToday = say({ now: at(D, "19:10"), days: { [D]: { ...dawnEve, cut: [19, 20] } } });
+check("오늘 남은 칸을 다 지우면 「여기까지」", cutToday.text.startsWith("오늘은 여기까지예요."), cutToday.text);
+
+const savedToday = { date: "2026-10-06", saved: true };
+const cutAsk = ask("출근 전 지워 줘", savedToday);
+check("「출근 전 지워 줘」 → 출근 전 칸 지우기 제안", cutAsk.proposal?.cut === "am" && cutAsk.yes === "네, 지워 주세요" && cutAsk.text.includes("출근 전 칸을 지울까요?"), cutAsk.text);
+check("「퇴근 후 칸 안 했어」 → 퇴근 후", ask("퇴근 후 칸 안 했어", savedToday).proposal?.cut === "pm");
+check("휴일은 「오후 지워」 → 오후 칸", ask("오후 지워", { ...savedToday, holiday: true }).text.includes("오후 칸을 지울까요?"));
+check("지우기 제안 뒤 「오후로」 → 퇴근 후로 뒤집기", replyTo("오후로", { ...C, ...savedToday }, cutAsk.proposal).proposal?.cut === "pm");
+check("남기지 않은 날은 지울 칸이 없다", ask("출근 전 지워").proposal === undefined);
+check("「이 날 빼 줘」는 그대로 날 빼기", ask("이 날 빼 줘", savedToday).proposal?.drop === true);
+const endAsk = ask("오늘 초과 끝", savedToday);
+check("「오늘 초과 끝」 → 끝내기 제안", endAsk.proposal?.end === true && endAsk.yes === "네, 끝내 주세요", endAsk.text);
+check("「퇴근했어요」 · 「오늘은 끝났어요」도", ask("퇴근했어요", savedToday).proposal?.end === true && ask("오늘은 끝났어요", savedToday).proposal?.end === true);
+check("다른 날이거나 안 남긴 날은 끝낼 것이 없다", ask("초과 끝").proposal === undefined && ask("초과 끝", { date: "2026-10-08", saved: true }).proposal === undefined);
 
 console.log(`\n${checked - problems.length}/${checked}`);
 if (problems.length > 0) {

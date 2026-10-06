@@ -8,7 +8,10 @@
  *   묻기    = 토막이 시작하기 10분 전(휴일 첫 토막은 30분 전) 「남으세요?」. 답이 없으면 칸 알림은 그대로 울린다.
  *   받는 때 = 사람이 정한 알림 받는 시간(기본 하루 종일). 그 밖의 칸 · 요약은 울리지 않고, 묻기 · 다음 날은 받는 시간
  *             시작으로 미룬다. 사전신청을 넉넉히 올려 두어도 자는 새벽에 울리지 않게 하려는 것이다.
- *   칸      = [확인] 칸마다 `nudgeAt` 시각. 「눌렀어요」 한 칸, 「안 남아요」 한 토막, 「오늘은 끝났어요」 뒤 칸은 울리지 않는다.
+ *   칸      = [확인] 칸마다 `nudgeAt` 시각. 「눌렀어요」 한 칸, 「안 남아요」 한 토막, 「오늘은 끝났어요」 뒤 칸, 지운 칸은 울리지 않는다.
+ *   한 번 더 = 칸 알림 뒤에도 「눌렀어요」가 없으면 정각 10분 전(매시 50분)에 한 번 더. 글 앞에 🟠 를 달아 첫 알림과 다르게 보인다.
+ *             그 칸에서 누를 틈이 50분 전에 끝나면 울리지 않는다.
+ *   지운 칸 = 사전신청은 걸렸는데 남지 않은 칸. 다음 날 「못 누른 칸(사유)」과 「안 남은 칸」을 가르려고 남긴다.
  *   요약    = 마지막으로 남은 토막이 끝나고 10분 뒤. 「오늘은 끝났어요」를 누른 날은 없다.
  *   다음 날 = 09:10 확인자료(지금과 같음). 「올렸어요」를 누르면 그날이 닫힌다.
  *
@@ -26,7 +29,8 @@ export interface DayForm {
 
 /** 하루에 남기는 것. 화면이 「이 날 초과로 남기기」를 누를 때 만들고, 알림 단추의 답을 여기에 합친다. */
 export interface DayNote {
-  clicks: Array<{ hour: number; at: number }>;
+  /** [확인] 칸. `end` = 그 칸에서 누를 틈이 끝나는 때(그날의 분). 옛 기록에는 없다(칸 끝으로 본다). */
+  clicks: Array<{ hour: number; at: number; end?: number }>;
   reasons: Array<{ hour: number; reason: string }>;
   exclusions: Range[];
   done: boolean;
@@ -42,11 +46,13 @@ export interface DayNote {
   left?: number[];
   /** 「오늘은 끝났어요」를 누른 때(그날의 분). */
   endedAt?: number;
+  /** 지운 칸(시). 사전신청만 걸리고 남지 않은 칸. 알림이 울리지 않고, 다음 날 사유 쓸 칸에서 빠진다. */
+  cut?: number[];
   form?: DayForm;
 }
 
 export type AlarmJob =
-  | { at: number; kind: "slot"; hour: number; date: string }
+  | { at: number; kind: "slot"; hour: number; date: string; again?: true }
   | { at: number; kind: "day"; date: string }
   | { at: number; kind: "ask"; date: string; hour: number; until: number }
   | { at: number; kind: "sum"; date: string; clicks: number; reasons: number; pressed: number[] };
@@ -90,6 +96,8 @@ export function readPrefs(value: unknown): AlarmPrefs {
 }
 /** 요약은 토막이 끝나고 몇 분 뒤. */
 export const SUM_AFTER = 10;
+/** 한 번 더 알림은 매시 몇 분에(정각 10분 전). */
+export const AGAIN_AT = 50;
 
 export interface Segment {
   /** 첫 칸의 시. */
@@ -110,11 +118,19 @@ export function segmentsOf(note: Pick<DayNote, "clicks" | "reasons">): Segment[]
   return out;
 }
 
-/** 이 토막이 아직 살아 있나(「안 남아요」도, 「끝났어요」 뒤도 아님). */
-function alive(note: DayNote, seg: Segment): boolean {
-  if (note.left?.includes(seg.first)) return false;
-  if (note.endedAt !== undefined && seg.first * HOUR >= note.endedAt) return false;
-  return true;
+/**
+ * 알림이 울리지 않는 칸(시). 「안 남아요」 한 토막 · 「끝났어요」 뒤 칸 · 지운 칸.
+ * 「안 남아요」는 묻기를 받은 칸(토막의 첫 살아 있는 칸)으로 오므로 토막 안의 어느 시든 그 토막 전체를 끈다.
+ */
+export function offHoursOf(note: DayNote): Set<number> {
+  const off = new Set<number>(note.cut ?? []);
+  for (const seg of segmentsOf(note)) {
+    const left = (note.left ?? []).some((h) => h >= seg.first && h < seg.until);
+    for (let h = seg.first; h < seg.until; h++) {
+      if (left || (note.endedAt !== undefined && h * HOUR >= note.endedAt)) off.add(h);
+    }
+  }
+  return off;
 }
 
 /** 맡길 알림. 아직 안 지난 것만, 시각 순으로. */
@@ -128,36 +144,50 @@ export function jobsOf(days: Record<string, DayNote>, now: number, prefs: AlarmP
   for (const [date, note] of Object.entries(days)) {
     if (note.done) continue;
     const segments = segmentsOf(note);
-    // 받는 시간과 한 칸도 안 겹치는 토막은 통째로 조용히 둔다.
-    const live = segments.filter((s) => alive(note, s) && s.until * HOUR > prefs.from && s.first * HOUR < prefs.to);
+    const off = offHoursOf(note);
+    // 토막마다 아직 울릴 칸. 다 꺼졌거나 지운 토막, 받는 시간과 한 칸도 안 겹치는 토막은 통째로 조용히 둔다.
+    const live = segments
+      .map((seg) => {
+        const hours: number[] = [];
+        for (let h = seg.first; h < seg.until; h++) if (!off.has(h)) hours.push(h);
+        return { seg, hours };
+      })
+      .filter(({ seg, hours }) => hours.length > 0 && seg.until * HOUR > prefs.from && seg.first * HOUR < prefs.to);
 
-    live.forEach((seg) => {
-      if (!note.stay?.includes(seg.first)) {
+    live.forEach(({ seg, hours }) => {
+      const first = hours[0];
+      if (!note.stay?.some((h) => h >= seg.first && h < seg.until)) {
         const before = note.holiday && seg === segments[0] ? Math.max(prefs.askBefore, ASK_BEFORE_HOLIDAY) : prefs.askBefore;
         // 받는 시간 전이면 받는 시간 시작으로 미룬다. 토막이 그 전에 끝나면 묻지 않는다.
-        const ask = Math.max(seg.first * HOUR - before, prefs.from);
+        // 앞 칸을 지웠으면 남은 첫 칸 앞에서 묻는다.
+        const ask = Math.max(first * HOUR - before, prefs.from);
         if (ask < seg.until * HOUR && ask < prefs.to) {
-          push({ at: kstAt(date, ask), kind: "ask", date, hour: seg.first, until: seg.until });
+          push({ at: kstAt(date, ask), kind: "ask", date, hour: first, until: seg.until });
         }
       }
       for (const c of note.clicks) {
-        if (c.hour < seg.first || c.hour >= seg.until) continue;
+        if (!hours.includes(c.hour)) continue;
         if (note.pressed?.includes(c.hour)) continue;
         if (note.endedAt !== undefined && c.at >= note.endedAt) continue;
-        if (!inside(c.at)) continue;
-        push({ at: kstAt(date, c.at), kind: "slot", hour: c.hour, date });
+        if (inside(c.at)) push({ at: kstAt(date, c.at), kind: "slot", hour: c.hour, date });
+        // 그래도 안 눌렀으면 정각 10분 전에 한 번 더. 누를 틈이 그 전에 끝나면 없다.
+        const again = c.hour * HOUR + AGAIN_AT;
+        const until = c.end ?? (c.hour + 1) * HOUR;
+        if (again > c.at && again < until && inside(again) && (note.endedAt === undefined || again < note.endedAt)) {
+          push({ at: kstAt(date, again), kind: "slot", hour: c.hour, date, again: true });
+        }
       }
     });
 
-    const end = live.length > 0 ? live[live.length - 1].until * HOUR + SUM_AFTER : -1;
+    const end = live.length > 0 ? (live[live.length - 1].hours.slice(-1)[0] + 1) * HOUR + SUM_AFTER : -1;
     // 받는 시간이 하루 끝까지면 자정 넘어 10분 요약도 보낸다.
     if (live.length > 0 && note.endedAt === undefined && (inside(end) || (prefs.to === 24 * HOUR && end >= prefs.from))) {
       push({
         at: kstAt(date, end),
         kind: "sum",
         date,
-        clicks: note.clicks.length,
-        reasons: note.reasons.length,
+        clicks: note.clicks.filter((c) => !note.cut?.includes(c.hour)).length,
+        reasons: note.reasons.filter((r) => !note.cut?.includes(r.hour)).length,
         pressed: [...(note.pressed ?? [])].sort((a, b) => a - b),
       });
     }

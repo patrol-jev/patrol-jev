@@ -101,6 +101,8 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
         var clicks: Int? = nil
         var reasons: Int? = nil
         var pressed: [Int]? = nil
+        /// 정각 10분 전 한 번 더(아직 안 누른 칸). 글 앞에 🟠.
+        var again: Bool? = nil
 
         var fireDate: Date { Date(timeIntervalSince1970: at / 1000) }
         var identifier: String { "\(AlarmCenter.prefix)\(Int(at))-\(kind)-\(date)-\(hour.map(String.init) ?? "")" }
@@ -137,7 +139,7 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
             switch kind {
             case "slot":
                 guard let hour, hours.contains(hour) else { continue }
-                out.append(Job(at: at, kind: kind, date: date, hour: hour))
+                out.append(Job(at: at, kind: kind, date: date, hour: hour, again: (item["again"] as? Bool) == true ? true : nil))
             case "ask":
                 guard let hour, hours.contains(hour), let until = int(item["until"]), until > hour, until <= 24 else { continue }
                 out.append(Job(at: at, kind: kind, date: date, hour: hour, until: until))
@@ -293,6 +295,7 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
         switch job.kind {
         case "slot":
             let hour = job.hour ?? 0
+            if job.again == true { return "🟠 \(hours(hour, hour + 1)) 칸이 10분 남았습니다. 아직이면 [확인]을 누릅니다." }
             return "\(hours(hour, hour + 1)) 칸 [확인]을 누를 때입니다."
         case "ask":
             let hour = job.hour ?? 0
@@ -363,6 +366,8 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
             guard let hour else { return }
             events += [Event(op: "done", date: date, hour: hour)]
             snoozes = snoozes.filter { !($0.date == date && $0.hour == hour) }
+            // 이 칸의 한 번 더 알림(50분)도 뺀다.
+            jobs = jobs.filter { !($0.date == date && $0.kind == "slot" && $0.hour == hour) }
         case Action.snooze:
             guard let hour else { return }
             let at = (Date().timeIntervalSince1970 + Self.snoozeSeconds) * 1000
@@ -371,6 +376,7 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
             guard let hour else { return }
             events += [Event(op: "missed", date: date, hour: hour)]
             snoozes = snoozes.filter { !($0.date == date && $0.hour == hour) }
+            jobs = jobs.filter { !($0.date == date && $0.kind == "slot" && $0.hour == hour) }
         case Action.end:
             events += [Event(op: "end", date: date, minute: Self.minuteNow())]
             let now = Date()

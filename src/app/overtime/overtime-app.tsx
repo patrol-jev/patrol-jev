@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { applyEvents, DEFAULT_PREFS, jobsOf, readPrefs, segmentsOf, type AlarmPrefs, type DayForm, type DayNote } from "@/core/overtime/alarms";
+import { applyEvents, DEFAULT_PREFS, jobsOf, offHoursOf, readPrefs, type AlarmPrefs, type DayForm, type DayNote } from "@/core/overtime/alarms";
 import { FAQ, SOURCES } from "@/core/overtime/faq";
 import {
   dayLabel,
@@ -45,8 +45,12 @@ import "./overtime.css";
  * 무엇을 언제 울릴지(묻기 · 칸 · 요약 · 다음 날)는 `src/core/overtime/alarms.ts` 가 정한다.
  * 아이폰 앱에서 알림 단추(눌렀어요 · 안 남아요 …)로 답하면 앱이 쌓아 두었다가 이 화면이 열릴 때 받아 합친다.
  *
+ * 칸 목록은 출근 전 칸이 위, 퇴근 후 칸이 아래이고, 그 사이에 근무시간을 한 바퀴 도는 선(루프)을 가늘게 그린다.
+ * 남긴 날에는 칸을 왼쪽으로 밀어 지우고(사전신청만 걸리고 안 남은 칸), 출근 전 · 퇴근 후를 한 번에 지울 수도 있다.
+ * 지운 칸은 알림이 울리지 않고, 다음 날 말풍선이 「못 누른 칸(사유)」과 따로 말한다.
+ *
  * 색: 이 화면에는 Jev 값도 생성 모델의 글도 없다. 그래서 무지개빛도 회색 규칙도 쓰지 않는다.
- * 파랑은 [확인]을 누르는 칸, 주황은 사유를 쓰는 칸. 두 가지 뜻에만 쓴다.
+ * 파랑은 [확인]을 누르는 칸, 주황은 사유를 쓰는 칸과 정각 10분 전 한 번 더 알림. 그 뜻에만 쓴다.
  */
 
 const CLICK = "#2563eb";
@@ -130,7 +134,7 @@ function noteOf(plan: Plan, holiday: boolean, form: DayForm, prev?: DayNote): Da
     form,
     clicks: plan.slots.flatMap((s) => {
       const at = nudgeAt(s);
-      return at === null ? [] : [{ hour: s.hour, at }];
+      return at === null ? [] : [{ hour: s.hour, at, end: Math.max(...s.windows.map((w) => w.to)) }];
     }),
     reasons: plan.slots.flatMap((s) => (s.reason ? [{ hour: s.hour, reason: s.reason }] : [])),
     exclusions: plan.exclusions,
@@ -211,6 +215,7 @@ function Board() {
   const broken = spans.some((s) => toRange(s) === null) || gaps.some((g) => toRange(g) === null);
   const today = kstToday(now);
   const tomorrow = nextDate(today);
+  const nowMinute = Math.floor((now - kstAt(today, 0)) / 60_000);
 
   // 「이 날 초과로 남기기」를 누른 날만 들고 있는다. 지금 보는 날이 남긴 날이면 넣은 값을 따라 고쳐 보인다.
   // 칸이 없어지면 뺀다. 이미 올렸다고 한 날은 건드리지 않는다.
@@ -301,6 +306,28 @@ function Board() {
     const pressed = on ? (note.pressed ?? []).filter((h) => h !== hour) : [...(note.pressed ?? []), hour].sort((a, b) => a - b);
     setDays({ ...shown, [d]: { ...note, pressed, missed: (note.missed ?? []).filter((h) => h !== hour) } });
   };
+  /** 오늘 초과를 지금 끝낸다. 남은 칸 알림이 멈춘다(앱의 「오늘은 끝났어요」와 같다). */
+  const endToday = () => {
+    const note = shown[today];
+    if (!note || note.done || (note.endedAt !== undefined && note.endedAt <= nowMinute)) return;
+    setDays({ ...shown, [today]: { ...note, endedAt: nowMinute } });
+  };
+  /** 칸을 지우거나 되살린다. 사전신청만 걸리고 남지 않은 칸. `on` 이 없으면 뒤집는다. */
+  const setCut = (hours: number[], on?: boolean, d: string = date) => {
+    const note = shown[d];
+    if (!note || hours.length === 0) return;
+    const now = new Set(note.cut ?? []);
+    const add = on ?? !hours.every((h) => now.has(h));
+    for (const h of hours) {
+      if (add) now.add(h);
+      else now.delete(h);
+    }
+    setDays({ ...shown, [d]: { ...note, cut: [...now].sort((a, b) => a - b) } });
+  };
+  /** 출근 전(휴일은 오전)인가. 평일은 근무 시작 전 칸, 휴일은 낮 12시 전 칸. */
+  const baseFrom = parseHhmm(base.from) ?? 9 * 60;
+  const isAm = (hour: number) => (holiday ? hour < 12 : hour * 60 < baseFrom);
+  const halfHours = (half: "am" | "pm") => plan.slots.filter((s) => isAm(s.hour) === (half === "am")).map((s) => s.hour);
   /** 「안 남아요」·「끝났어요」를 되돌린다. */
   const undoLeave = () => {
     const note = shown[date];
@@ -364,10 +391,16 @@ function Board() {
     }
     if (p.keep) keepDay();
     if (p.drop) dropDay();
+    if (p.end) endToday();
+    if (p.cut) setCut(halfHours(p.cut), true);
     if (p.alarm) void turnOn();
     setShot((n) => n + 1);
     const said: Said = p.drop
       ? { text: `${dayLabel(day)} 초과를 뺐어요. 그날 알림도 멈췄어요.` }
+      : p.end
+      ? { text: "오늘은 여기까지 할게요. 남은 칸 알림은 멈췄어요.", sub: "내일 아침에 확인자료 차례를 알려 드릴게요." }
+      : p.cut
+      ? { text: "지웠어요. 그 칸들은 안 남은 칸으로 둘게요.", sub: "다음 날 사유 쓸 칸에서 빠져요. 되돌리려면 칸 목록 아래에서 눌러 주세요." }
       : p.keep
       ? { text: `${dayLabel(day)} 초과를 남겼어요. 칸마다 제가 챙길게요.` }
       : p.alarm
@@ -403,15 +436,70 @@ function Board() {
 
   const clicks = plan.slots.filter((s) => s.action === "click").length;
   const note = saved ? shown[date] : undefined;
-  // 「안 남아요」 한 토막과 「끝났어요」 뒤 칸. 알림이 울리지 않는 칸이라 흐리게 보인다.
-  const offHours = new Set<number>();
-  if (note) {
-    for (const seg of segmentsOf(note)) {
-      for (let h = seg.first; h < seg.until; h++) {
-        if (note.left?.includes(seg.first) || (note.endedAt !== undefined && h * 60 >= note.endedAt)) offHours.add(h);
-      }
-    }
-  }
+  // 「안 남아요」 한 토막과 「끝났어요」 뒤 칸. 알림이 울리지 않는 칸이라 흐리게 보인다. 지운 칸은 따로(줄 긋기).
+  const cutHours = new Set(note?.cut ?? []);
+  const offHours = new Set([...(note ? offHoursOf(note) : [])].filter((h) => !cutHours.has(h)));
+  const amSlots = plan.slots.filter((s) => isAm(s.hour));
+  const pmSlots = plan.slots.filter((s) => !isAm(s.hour));
+
+  /** 칸 한 줄. 출근 전 칸과 퇴근 후 칸을 따로 그리려고 함수로 둔다. */
+  const slotRow = (s: Plan["slots"][number]) => {
+    const at = nudgeAt(s);
+    const quiet = holiday && s.hour >= 9 && s.hour < 18;
+    const pressed = note?.pressed?.includes(s.hour) ?? false;
+    const off = offHours.has(s.hour);
+    const cut = cutHours.has(s.hour);
+    const asked = address.date === date && address.slot === s.hour;
+    return (
+      <SlotRow key={s.hour} swipe={saved} cut={cut} onCut={() => setCut([s.hour])} style={asked ? { background: "var(--wash)" } : off ? { opacity: 0.5 } : undefined}>
+        <div className="w-[64px] shrink-0 text-[13px] font-medium tnum">{slotLabel(s.hour)}</div>
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          {cut ? (
+            <span className="text-[13px] text-[var(--muted)]">
+              안 남은 칸{" "}
+              <button type="button" onClick={() => setCut([s.hour], false)} className="text-[11px] underline underline-offset-2">
+                되돌리기
+              </button>
+            </span>
+          ) : s.action === "click" ? (
+            <span className="text-[13px]" style={{ color: CLICK }}>
+              <b>[확인]</b> 누르기
+              <span className="text-[11px] text-[var(--muted)]">
+                {" "}
+                · {s.windows.map((w) => `${hhmm(w.from)}~${hhmm(w.to)}`).join(", ")} 사이
+                {at !== null && ` (권장 ${hhmm(at)}쯤)`}
+              </span>
+            </span>
+          ) : (
+            <span className="text-[13px]" style={{ color: REASON }}>
+              미기록 사유 <b>「{s.reason}」</b>
+            </span>
+          )}
+          {!cut && quiet && s.action === "click" && <span className="text-[11px] text-[var(--muted)]">휴일 낮이라 알림이 안 뜹니다. 직접 누릅니다.</span>}
+          {!cut && s.notes.map((n) => (
+            <span key={n} className="text-[11px] text-[var(--muted)]">
+              {n}
+            </span>
+          ))}
+          {asked && !cut && s.action === "click" && !pressed && (
+            <span className="text-[11px]" style={{ color: REASON }}>
+              못 눌렀다면 이 칸은 미기록 사유를 씁니다. 그 시간에 무엇을 했는지 그대로 적습니다(식사 · 현장근무 · 개인용무 외출 등).
+            </span>
+          )}
+        </div>
+        {saved && !cut && s.action === "click" && (
+          <button
+            onClick={() => togglePressed(s.hour)}
+            className="h-fit shrink-0 rounded-md border px-2 py-1 text-[11px]"
+            style={pressed ? { borderColor: CLICK, background: CLICK, color: "#fff" } : { borderColor: CLICK, color: CLICK }}
+            aria-pressed={pressed}
+          >
+            {pressed ? "눌렀어요 ✓" : "눌렀어요"}
+          </button>
+        )}
+      </SlotRow>
+    );
+  };
 
   const line = lineOf({
     now,
@@ -422,8 +510,8 @@ function Board() {
     native,
     prefs,
   });
-  const nowMinute = Math.floor((now - kstAt(today, 0)) / 60_000);
   const other = picked && date !== today && date !== tomorrow;
+  const ended = note?.endedAt !== undefined && note.endedAt <= nowMinute;
 
   return (
     <>
@@ -477,6 +565,11 @@ function Board() {
             acts={{
               onUploaded: markDone,
               onPress: (hour) => togglePressed(hour, today),
+              onEnd: () => {
+                endToday();
+                setTalk(null);
+                setShot((n) => n + 1);
+              },
               onYes: approve,
               onNo: () => decline(),
               onChip: send,
@@ -540,8 +633,9 @@ function Board() {
                     </div>
                   ))}
                   <div className="flex flex-wrap gap-1">
-                    {!holiday && <Add onClick={() => setSpans([...spans, { from: shift(base.from, -60), to: base.from }])}>출근 전</Add>}
-                    <Add onClick={() => setSpans([...spans, { from: holiday ? "09:00" : base.to, to: holiday ? "18:00" : shift(base.to, 120) }])}>
+                    {/* 더한 토막은 시각 순으로 선다. 출근 전은 위, 퇴근 후는 아래. */}
+                    {!holiday && <Add onClick={() => setSpans(byTime([...spans, { from: shift(base.from, -60), to: base.from }]))}>출근 전</Add>}
+                    <Add onClick={() => setSpans(byTime([...spans, { from: holiday ? "09:00" : base.to, to: holiday ? "18:00" : shift(base.to, 120) }]))}>
                       {holiday ? "토막 더" : "퇴근 후 토막 더"}
                     </Add>
                     {!moreGaps && <Add onClick={() => setMoreGaps(true)}>자리 비운 때(식사 · 외출 · 현장)</Add>}
@@ -629,59 +723,30 @@ function Board() {
 
                 {plan.slots.length > 0 && (
                   <div className="overflow-hidden rounded-2xl border border-[var(--line)]">
-                    {plan.slots.map((s) => {
-                      const at = nudgeAt(s);
-                      const quiet = holiday && s.hour >= 9 && s.hour < 18;
-                      const pressed = note?.pressed?.includes(s.hour) ?? false;
-                      const off = offHours.has(s.hour);
-                      const asked = address.date === date && address.slot === s.hour;
+                    {amSlots.map(slotRow)}
+                    {/* 출근 전과 퇴근 후 사이. 근무시간을 한 바퀴 도는 선. 오늘 근무 중이면 점이 그 길을 돈다. */}
+                    {!holiday && amSlots.length > 0 && pmSlots.length > 0 && (
+                      <WorkLoop label={`근무 ${base.from}~${base.to}`} moving={date === today && nowMinute >= baseFrom && nowMinute < (parseHhmm(base.to) ?? 18 * 60)} />
+                    )}
+                    {pmSlots.map(slotRow)}
+                  </div>
+                )}
+
+                {saved && plan.slots.length > 0 && (
+                  <div className="-mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-[11px] text-[var(--muted)]">
+                    <span>안 남은 칸 지우기</span>
+                    {(["am", "pm"] as const).map((half) => {
+                      const hours = halfHours(half);
+                      if (hours.length === 0) return null;
+                      const all = hours.every((h) => cutHours.has(h));
+                      const name = holiday ? (half === "am" ? "오전" : "오후") : half === "am" ? "출근 전" : "퇴근 후";
                       return (
-                        <div
-                          key={s.hour}
-                          className="flex gap-3 border-b border-[var(--line)] px-3 py-2.5 last:border-b-0"
-                          style={asked ? { background: "var(--wash)" } : off ? { opacity: 0.5 } : undefined}
-                        >
-                          <div className="w-[64px] shrink-0 text-[13px] font-medium tnum">{slotLabel(s.hour)}</div>
-                          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                            {s.action === "click" ? (
-                              <span className="text-[13px]" style={{ color: CLICK }}>
-                                <b>[확인]</b> 누르기
-                                <span className="text-[11px] text-[var(--muted)]">
-                                  {" "}
-                                  · {s.windows.map((w) => `${hhmm(w.from)}~${hhmm(w.to)}`).join(", ")} 사이
-                                  {at !== null && ` (권장 ${hhmm(at)}쯤)`}
-                                </span>
-                              </span>
-                            ) : (
-                              <span className="text-[13px]" style={{ color: REASON }}>
-                                미기록 사유 <b>「{s.reason}」</b>
-                              </span>
-                            )}
-                            {quiet && s.action === "click" && <span className="text-[11px] text-[var(--muted)]">휴일 낮이라 알림이 안 뜹니다. 직접 누릅니다.</span>}
-                            {s.notes.map((n) => (
-                              <span key={n} className="text-[11px] text-[var(--muted)]">
-                                {n}
-                              </span>
-                            ))}
-                            {asked && s.action === "click" && !pressed && (
-                              <span className="text-[11px]" style={{ color: REASON }}>
-                                못 눌렀다면 이 칸은 미기록 사유를 씁니다. 그 시간에 무엇을 했는지 그대로 적습니다(식사 · 현장근무 · 개인용무 외출 등).
-                              </span>
-                            )}
-                          </div>
-                          {saved && s.action === "click" && (
-                            <button
-                              onClick={() => togglePressed(s.hour)}
-                              className="h-fit shrink-0 rounded-md border px-2 py-1 text-[11px]"
-                              style={pressed ? { borderColor: CLICK, background: CLICK, color: "#fff" } : { borderColor: CLICK, color: CLICK }}
-                              aria-pressed={pressed}
-                            >
-                              {pressed ? "눌렀어요 ✓" : "눌렀어요"}
-                            </button>
-                          )}
-                        </div>
+                        <button key={half} type="button" onClick={() => setCut(hours)} className="rounded-full border border-[var(--line)] px-2.5 py-0.5">
+                          {all ? `${name} 되돌리기` : `${name} 모두`}
+                        </button>
                       );
                     })}
+                    <span>· 한 칸만은 왼쪽으로 밀어요.</span>
                   </div>
                 )}
 
@@ -710,6 +775,11 @@ function Board() {
                     <span className="rounded-full border px-4 py-2 text-[13px] font-medium" style={{ borderColor: "var(--ink)" }}>
                       {dayLabel(date)} 남김 ✓
                     </span>
+                    {date === today && !ended && (
+                      <button type="button" onClick={endToday} className="ot-hint rounded-full px-3.5 py-1.5 text-[12.5px] font-medium">
+                        오늘 초과 끝
+                      </button>
+                    )}
                     <button onClick={dropDay} className="text-[11px] text-[var(--muted)] underline underline-offset-2">
                       빼기
                     </button>
@@ -862,6 +932,7 @@ interface Talk {
 interface Acts {
   onUploaded?: (date: string) => void;
   onPress?: (hour: number) => void;
+  onEnd?: () => void;
   onYes?: (proposal: Proposal) => void;
   onNo?: () => void;
   onChip?: (text: string) => void;
@@ -916,7 +987,7 @@ function Stage({
       className="ot-stage flex flex-col items-center justify-center gap-2 rounded-[28px] px-4 pb-5 pt-6"
       style={{ minHeight: tall ? 460 : undefined }}
     >
-      <div className="ot-bubble w-full max-w-[460px] rounded-[20px] px-4 py-3.5" aria-live="polite">
+      <div className="ot-bubble w-full max-w-[460px] rounded-[20px] px-4 py-3.5" aria-live="polite" data-late={said.late ? "1" : undefined}>
         <Typed key={`${user ?? ""}|${said.text}`} said={said} acts={acts} />
       </div>
       <span className="my-6 scale-[1.7] drop-shadow-[0_8px_12px_rgba(40,52,120,0.18)]">
@@ -1026,16 +1097,21 @@ function Typed({ said, acts }: { said: Said; acts: Acts }) {
         <div className="ot-say" onClick={(event) => event.stopPropagation()}>
           {said.sub && <p className="mt-1 text-[12px] leading-relaxed text-[var(--muted)]">{said.sub}</p>}
           {said.offer === "alarm" && acts.alarm && <AlarmOffer {...acts.alarm} />}
-          {(said.uploaded !== undefined || said.press !== undefined || said.proposal || said.nav) && (
+          {(said.uploaded !== undefined || said.press !== undefined || said.proposal || said.nav || (said.end && acts.onEnd)) && (
             <div className="mt-2.5 flex flex-wrap gap-2">
               {said.uploaded !== undefined && acts.onUploaded && (
                 <button type="button" onClick={() => acts.onUploaded!(said.uploaded!)} className={button} style={{ background: "var(--ink)", color: "var(--paper)" }}>
-                  올렸어요
+                  {said.close ?? "올렸어요"}
                 </button>
               )}
               {said.press !== undefined && acts.onPress && (
                 <button type="button" onClick={() => acts.onPress!(said.press!)} className={button} style={{ background: CLICK, color: "#fff" }}>
                   눌렀어요
+                </button>
+              )}
+              {said.end && acts.onEnd && (
+                <button type="button" onClick={acts.onEnd} className={`${button} ot-hint`}>
+                  오늘 초과 끝
                 </button>
               )}
               {said.proposal && acts.onYes && (
@@ -1191,6 +1267,94 @@ function shift(text: string, minutes: number): string {
   const m = parseHhmm(text);
   if (m === null) return text;
   return hhmm(Math.max(0, Math.min(24 * 60, m + minutes)));
+}
+
+/** 토막을 시작 시각 순으로. 못 읽는 칸은 맨 뒤로(넣은 차례대로). */
+function byTime(list: TextRange[]): TextRange[] {
+  return list
+    .map((r, i) => ({ r, i, at: parseHhmm(r.from) ?? 24 * 60 + i }))
+    .sort((a, b) => a.at - b.at || a.i - b.i)
+    .map((x) => x.r);
+}
+
+/** 이만큼 밀면 지운다(px). */
+const SWIPE_CUT = 72;
+
+/**
+ * 칸 한 줄. 남긴 날에는 손가락으로 왼쪽으로 밀어 지운다(지운 칸을 다시 밀면 되살린다). 밀리는 동안 뒤에 「지우기」가 보인다.
+ * 세로로 움직이면 화면을 내리는 것으로 보고 놓아 준다(`touch-action: pan-y`). 단추 위에서 시작한 손짓은 밀지 않는다.
+ */
+function SlotRow({ swipe, cut, onCut, style, children }: { swipe: boolean; cut: boolean; onCut: () => void; style?: React.CSSProperties; children: React.ReactNode }) {
+  const [dx, setDx] = useState(0);
+  const [held, setHeld] = useState(false);
+  const start = useRef<{ x: number; y: number; id: number; moving: boolean } | null>(null);
+  const reset = () => {
+    start.current = null;
+    setHeld(false);
+    setDx(0);
+  };
+  return (
+    <div className="relative border-b border-[var(--line)] last:border-b-0">
+      {swipe && dx < 0 && (
+        <div className="ot-row-back absolute inset-0 flex items-center justify-end pr-4 text-[12px] font-semibold" data-ready={dx <= -SWIPE_CUT ? "1" : undefined}>
+          {cut ? "되살리기" : "지우기"}
+        </div>
+      )}
+      <div
+        className={`ot-row relative flex gap-3 px-3 py-2.5 ${swipe ? "select-none" : ""}`}
+        data-cut={cut ? "1" : undefined}
+        style={{ ...style, transform: dx ? `translateX(${dx}px)` : undefined, transition: held ? "none" : undefined, touchAction: swipe ? "pan-y" : undefined }}
+        onPointerDown={(e) => {
+          if (!swipe || (e.target as HTMLElement).closest("button")) return;
+          start.current = { x: e.clientX, y: e.clientY, id: e.pointerId, moving: false };
+        }}
+        onPointerMove={(e) => {
+          const s = start.current;
+          if (!s || s.id !== e.pointerId) return;
+          const x = e.clientX - s.x;
+          const y = e.clientY - s.y;
+          if (!s.moving) {
+            if (Math.abs(y) > 10 && Math.abs(y) > Math.abs(x)) {
+              start.current = null;
+              return;
+            }
+            if (Math.abs(x) < 8) return;
+            s.moving = true;
+            setHeld(true);
+            e.currentTarget.setPointerCapture(e.pointerId);
+          }
+          setDx(Math.max(-120, Math.min(0, x)));
+        }}
+        onPointerUp={() => {
+          if (dx <= -SWIPE_CUT) onCut();
+          reset();
+        }}
+        onPointerCancel={reset}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 출근 전 칸과 퇴근 후 칸 사이의 구분. 세로 선이 근무시간 동안 한 바퀴 돌고 다시 내려간다.
+ * 티 나지 않게 옅은 선이고, 오늘 근무 중이면 연보라 점이 그 바퀴를 천천히 돈다.
+ */
+function WorkLoop({ label, moving }: { label: string; moving: boolean }) {
+  return (
+    <div className="flex items-center gap-3 border-b border-[var(--line)] px-3" aria-label={label}>
+      <svg width="64" height="28" viewBox="0 0 64 28" fill="none" aria-hidden="true" className="shrink-0">
+        <path d="M32 0 V6 C32 16 46 18 46 11 C46 3 32 3 32 13 V28" className="ot-loop" strokeWidth="1.4" strokeLinecap="round" />
+        {moving && !calm() && (
+          <circle r="2.4" fill="#5b7cfa">
+            <animateMotion dur="4.8s" repeatCount="indefinite" path="M32 6 C32 16 46 18 46 11 C46 3 32 3 32 13" />
+          </circle>
+        )}
+      </svg>
+      <span className="tnum text-[11px] text-[var(--muted)]">{label}</span>
+    </div>
+  );
 }
 
 /**
