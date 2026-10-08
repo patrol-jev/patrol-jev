@@ -10,7 +10,11 @@ import WebKit
 ///
 /// 넘어오는 것은 울릴 시각, 날짜, 칸 번호(시), 칸 수뿐이다. 근무시간, 사유, 이름은 오지 않는다.
 ///
-/// 알림마다 단추가 있다(묻기: 남아요 · 안 남아요 / 칸: 눌렀어요 · 10분 뒤 · 못 눌렀어요 · 오늘은 끝났어요 / 다음 날: 올렸어요).
+/// 알림마다 단추가 있다(묻기: 남아요 · 안 남아요 / 칸: 눌렀어요 · 10분 뒤 · 못 눌렀어요 · 오늘은 끝났어요 / 다음 날: 올렸어요
+/// / 챙길 것: 했어요 · 오늘은 없어요 / 전날 「알람 맞추셨어요?」: 맞췄어요(시각 입력) / 당일 아침: 일어났어요).
+///
+/// 챙길 것(`src/core/overtime/chores.ts`)은 웹이 글까지 만들어 넘긴다. 사람이 붙인 이름이라 이 기기 안에만 있다.
+/// 전날 · 당일 아침 알림은 `part`(eve · ask · up)로 온다. 「맞췄어요」 뒤의 당일 아침 알림은 웹 화면이 다음에 열릴 때 셈해 넘긴다.
 /// 단추를 누르면 앱이 바로 알림을 고치고, 그 답을 쌓아 두었다가 웹 화면이 열릴 때 넘긴다(`take`).
 /// 단추는 본인이 적는 메모일 뿐이다. 인사랑에는 아무것도 보내지 않는다.
 ///
@@ -40,6 +44,10 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
         static let slot = "ot-slot"
         static let day = "ot-day"
         static let sum = "ot-sum"
+        static let chore = "ot-chore"
+        static let choreEve = "ot-chore-eve"
+        static let choreAsk = "ot-chore-ask"
+        static let choreUp = "ot-chore-up"
     }
 
     enum Action {
@@ -50,6 +58,10 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
         static let missed = "missed"
         static let end = "end"
         static let uploaded = "uploaded"
+        static let choreDone = "chore-done"
+        static let choreSkip = "chore-skip"
+        static let choreWake = "chore-wake"
+        static let choreUp = "chore-up"
     }
 
     private let center = UNUserNotificationCenter.current()
@@ -81,11 +93,21 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
         let missed = UNNotificationAction(identifier: Action.missed, title: "못 눌렀어요", options: [.foreground])
         let end = UNNotificationAction(identifier: Action.end, title: "오늘은 끝났어요", options: [.destructive])
         let uploaded = UNNotificationAction(identifier: Action.uploaded, title: "올렸어요")
+        let choreDone = UNNotificationAction(identifier: Action.choreDone, title: "했어요")
+        let choreSkip = UNNotificationAction(identifier: Action.choreSkip, title: "오늘은 없어요", options: [.destructive])
+        // 「맞췄어요」는 기상 시각을 받는다(「6」 · 「630」 · 「6:30」).
+        let choreWake = UNTextInputNotificationAction(identifier: Action.choreWake, title: "맞췄어요", options: [],
+                                                      textInputButtonTitle: "보내기", textInputPlaceholder: "몇 시에요? 예: 6:00")
+        let choreUp = UNNotificationAction(identifier: Action.choreUp, title: "일어났어요")
         return [
             UNNotificationCategory(identifier: Category.ask, actions: [stay, leave], intentIdentifiers: []),
             UNNotificationCategory(identifier: Category.slot, actions: [done, snooze, missed, end], intentIdentifiers: []),
             UNNotificationCategory(identifier: Category.day, actions: [uploaded], intentIdentifiers: []),
             UNNotificationCategory(identifier: Category.sum, actions: [], intentIdentifiers: []),
+            UNNotificationCategory(identifier: Category.chore, actions: [choreDone, choreSkip], intentIdentifiers: []),
+            UNNotificationCategory(identifier: Category.choreEve, actions: [], intentIdentifiers: []),
+            UNNotificationCategory(identifier: Category.choreAsk, actions: [choreWake], intentIdentifiers: []),
+            UNNotificationCategory(identifier: Category.choreUp, actions: [choreUp], intentIdentifiers: []),
         ]
     }
 
@@ -101,12 +123,25 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
         var clicks: Int? = nil
         var reasons: Int? = nil
         var pressed: [Int]? = nil
-        /// 정각 10분 전 한 번 더(아직 안 누른 칸). 글 앞에 🟠.
+        /// 정각 10분 전 한 번 더(아직 안 누른 칸). 글 앞에 🟠. 챙길 것은 단계 시각의 한 번 더.
         var again: Bool? = nil
+        /// 챙길 것의 번호 · 단계 · 단계 시각 · 글.
+        var id: String? = nil
+        var step: Int? = nil
+        var time: String? = nil
+        var body: String? = nil
+        /// 전날 · 당일 아침 자리(eve · ask · up). 당번 날 단계 알림에는 없다.
+        var part: String? = nil
 
         var fireDate: Date { Date(timeIntervalSince1970: at / 1000) }
-        var identifier: String { "\(AlarmCenter.prefix)\(Int(at))-\(kind)-\(date)-\(hour.map(String.init) ?? "")" }
+        var identifier: String {
+            let base = "\(AlarmCenter.prefix)\(Int(at))-\(kind)-\(date)-\(hour.map(String.init) ?? "")"
+            guard kind == "chore" else { return base }
+            return "\(base)-\(id ?? "")-\(step.map(String.init) ?? "")-\(part ?? "")-\(again == true ? "a" : "f")"
+        }
     }
+
+    static let parts = ["eve", "ask", "up"]
 
     /// 알림 단추로 받은 답. `alarms.ts` 의 `AlarmEvent` 와 같은 꼴.
     struct Event: Codable, Equatable {
@@ -114,6 +149,10 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
         let date: String
         var hour: Int? = nil
         var minute: Int? = nil
+        /// 챙길 것의 답(op = "chore"). state = done · skip · wake(minute = 기상 시각) · up.
+        var id: String? = nil
+        var step: Int? = nil
+        var state: String? = nil
     }
 
     private static func isDate(_ text: String) -> Bool {
@@ -150,6 +189,14 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
                 out.append(Job(at: at, kind: kind, date: date, clicks: clicks, reasons: reasons, pressed: pressed))
             case "day":
                 out.append(Job(at: at, kind: kind, date: date))
+            case "chore":
+                guard let id = item["id"] as? String, id.range(of: #"^[A-Za-z0-9_-]{1,24}$"#, options: .regularExpression) != nil,
+                      let step = int(item["step"]), (0..<12).contains(step),
+                      let time = item["time"] as? String, time.range(of: #"^([01]\d|2[0-3]):[0-5]\d$"#, options: .regularExpression) != nil,
+                      let body = item["body"] as? String, !body.isEmpty else { continue }
+                let part = (item["part"] as? String).flatMap { parts.contains($0) ? $0 : nil }
+                out.append(Job(at: at, kind: kind, date: date, again: (item["again"] as? Bool) == true ? true : nil,
+                               id: id, step: step, time: time, body: String(body.prefix(200)), part: part))
             default:
                 continue
             }
@@ -228,6 +275,9 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
             var item: [String: Any] = ["op": e.op, "date": e.date]
             if let hour = e.hour { item["hour"] = hour }
             if let minute = e.minute { item["minute"] = minute }
+            if let id = e.id { item["id"] = id }
+            if let step = e.step { item["step"] = step }
+            if let state = e.state { item["state"] = state }
             return item
         }
         events = []
@@ -257,7 +307,7 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
 
     private func request(for job: Job, answered: [Event], sound: Bool) -> UNNotificationRequest {
         let content = UNMutableNotificationContent()
-        content.title = "초과기록"
+        content.title = job.kind == "chore" ? "챙길 것" : "초과기록"
         content.body = Self.body(of: job, answered: answered)
         // 무음이면 소리도 진동도 없이 뜨기만 한다. 집중 모드도 뚫지 않는다.
         content.sound = sound ? .default : nil
@@ -268,6 +318,9 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
         var info: [String: Any] = ["path": "/overtime", "kind": job.kind, "date": job.date]
         if let hour = job.hour { info["hour"] = hour }
         if let until = job.until { info["until"] = until }
+        if let id = job.id { info["id"] = id }
+        if let step = job.step { info["step"] = step }
+        if let part = job.part { info["part"] = part }
         content.userInfo = info
 
         var calendar = Calendar(identifier: .gregorian)
@@ -282,8 +335,25 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
         case "ask": return Category.ask
         case "slot": return Category.slot
         case "day": return Category.day
+        case "chore":
+            switch job.part {
+            case "eve": return Category.choreEve
+            case "ask": return Category.choreAsk
+            case "up": return Category.choreUp
+            default: return Category.chore
+            }
         default: return Category.sum
         }
+    }
+
+    /// 「맞췄어요」에 친 글을 그날의 분으로. 「6」 · 「630」 · 「6:30」 · 「06:00」. 못 읽으면 nil.
+    static func minute(from text: String?) -> Int? {
+        guard let text else { return nil }
+        let digits = text.filter(\.isNumber)
+        guard !digits.isEmpty, digits.count <= 4, let value = Int(digits) else { return nil }
+        let (hour, minute) = digits.count <= 2 ? (value, 0) : (value / 100, value % 100)
+        guard (0..<24).contains(hour), (0..<60).contains(minute) else { return nil }
+        return hour * 60 + minute
     }
 
     private static func hours(_ from: Int, _ to: Int) -> String {
@@ -310,6 +380,8 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
             var line = "오늘 초과가 끝났습니다. [확인] \(job.clicks ?? 0)칸 중 눌렀어요 \(pressed.count)"
             if let reasons = job.reasons, reasons > 0 { line += " · 사유 쓸 칸 \(reasons)" }
             return line + ". 못 누른 칸은 사유를 씁니다."
+        case "chore":
+            return job.body ?? "챙길 것이 있어요."
         default:
             return "\(dayLabel(job.date)) 초과근무 확인자료를 올릴 차례입니다."
         }
@@ -339,7 +411,8 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
     // MARK: - 알림 단추
 
     /// 단추 하나를 처리한다. 걸린 알림을 고치고 답을 쌓는다. 웹 화면이 열리면 같은 답으로 같은 목록을 다시 셈한다.
-    private func handle(action: String, info: [AnyHashable: Any]) {
+    /// `text` = 글을 받는 단추(「맞췄어요」)에 친 글.
+    private func handle(action: String, info: [AnyHashable: Any], text: String? = nil) {
         guard let date = info["date"] as? String, Self.isDate(date) else { return }
         let hour = Self.int(info["hour"])
         let until = Self.int(info["until"])
@@ -388,6 +461,25 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
         case Action.uploaded:
             events += [Event(op: "uploaded", date: date)]
             jobs = jobs.filter { !($0.date == date && $0.kind == "day") }
+        case Action.choreDone:
+            guard let id = info["id"] as? String, let step = Self.int(info["step"]) else { return }
+            events += [Event(op: "chore", date: date, minute: Self.minuteNow(), id: id, step: step, state: "done")]
+            // 이 단계의 한 번 더도 뺀다.
+            jobs = jobs.filter { !($0.kind == "chore" && $0.date == date && $0.id == id && $0.step == step) }
+        case Action.choreSkip:
+            guard let id = info["id"] as? String, let step = Self.int(info["step"]) else { return }
+            events += [Event(op: "chore", date: date, id: id, step: step, state: "skip")]
+            // 그날 이 챙길 것은 다 멈춘다.
+            jobs = jobs.filter { !($0.kind == "chore" && $0.date == date && $0.id == id) }
+        case Action.choreWake:
+            // 기상 시각을 못 읽으면 적지 않는다. 전날 알림은 멈추고, 당일 아침 알림은 웹 화면이 열릴 때 셈한다.
+            guard let id = info["id"] as? String, let step = Self.int(info["step"]), let wake = Self.minute(from: text) else { return }
+            events += [Event(op: "chore", date: date, minute: wake, id: id, step: step, state: "wake")]
+            jobs = jobs.filter { !($0.kind == "chore" && $0.date == date && $0.id == id && ($0.part == "eve" || $0.part == "ask")) }
+        case Action.choreUp:
+            guard let id = info["id"] as? String, let step = Self.int(info["step"]) else { return }
+            events += [Event(op: "chore", date: date, id: id, step: step, state: "up")]
+            jobs = jobs.filter { !($0.kind == "chore" && $0.date == date && $0.id == id && $0.part == "up") }
         default:
             return
         }
@@ -412,11 +504,12 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
     ) {
         let info = response.notification.request.content.userInfo
         let action = response.actionIdentifier
+        let text = (response as? UNTextInputNotificationResponse)?.userText
 
         DispatchQueue.main.async {
             defer { completionHandler() }
             if action != UNNotificationDefaultActionIdentifier && action != UNNotificationDismissActionIdentifier {
-                self.handle(action: action, info: info)
+                self.handle(action: action, info: info, text: text)
             }
             // 알림 자체를 눌렀을 때와 「못 눌렀어요」만 화면을 연다. 나머지 단추는 앱을 열지 않는다.
             guard action == UNNotificationDefaultActionIdentifier || action == Action.missed else { return }
