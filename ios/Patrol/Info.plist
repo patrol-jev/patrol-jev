@@ -40,6 +40,8 @@
 	<false/>
 	<key>NSCameraUsageDescription</key>
 	<string>순찰 사진을 바로 찍어 일지에 올리려면 사진기 권한이 필요합니다.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>메모 지도에서 내 둘레의 민원 자리를 찾고 길을 안내할 때만 씁니다. 위치는 이 기기 안에서만 쓰고 서버로 보내지 않습니다.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>만든 그림을 사진 보관함에 저장하려면 권한이 필요합니다.</string>
 </dict>
