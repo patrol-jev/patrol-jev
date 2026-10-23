@@ -539,6 +539,29 @@ final class AlarmCenter: NSObject, UNUserNotificationCenterDelegate {
         defer { pendingOpen = nil }
         return pendingOpen
     }
+
+    /// 바로 띄우는 알림 하나. 위험 일지의 새 사진 자동 보기가 특이사항을 알릴 때 쓴다(`Photos/PhotoScout.swift`).
+    /// 글은 웹이 만든다(위험도 · 띠 · 게이지 · 종류 · 주된 관찰). 사진은 없다. 누르면 `path` 를 연다.
+    /// 권한이 아직이면 묻는다. 초과기록 알림과 같은 권한이다.
+    func notifyNow(title: String, body: String, path: String, done: @escaping (Bool) -> Void) {
+        enable { ok, _ in
+            guard ok else {
+                done(false)
+                return
+            }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            content.sound = self.sound ? .default : nil
+            content.threadIdentifier = "risk"
+            content.interruptionLevel = .active
+            content.userInfo = ["path": path.hasPrefix("/") ? path : "/risk", "kind": "risk"]
+            let request = UNNotificationRequest(identifier: "risk-\(Int(Date().timeIntervalSince1970 * 1000))-\(Int.random(in: 0..<1000))", content: content, trigger: nil)
+            self.center.add(request) { error in
+                DispatchQueue.main.async { done(error == nil) }
+            }
+        }
+    }
 }
 
 /// 웹 화면과 이어지는 통로. 이 사이트의 맨 위 화면에서 온 말만 듣는다.

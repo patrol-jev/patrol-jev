@@ -19,4 +19,7 @@ enum Constants {
 
     /// 초과기록 화면이 울릴 목록을 앱에 넘기는 통로 이름. `src/app/overtime/push-client.ts` 와 같아야 한다.
     static let alarmMessage = "patrolAlarm"
+
+    /// 위험 일지의 새 사진 자동 보기가 보관함의 새 사진을 받아 가는 통로 이름. `src/ui/scout.ts` 와 같아야 한다.
+    static let scoutMessage = "patrolScout"
 }

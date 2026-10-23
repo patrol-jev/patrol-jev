@@ -48,6 +48,8 @@ final class WebViewHostController: UIViewController {
         }
         // 초과기록 알림. 웹 푸시가 없는 자리라 앱이 기기 안에서 울린다.
         config.userContentController.addScriptMessageHandler(AlarmBridge(), contentWorld: .page, name: Constants.alarmMessage)
+        // 위험 일지의 새 사진 자동 보기. 보관함의 새 사진을 줄인 사본으로 넘기고, 웹이 만든 알림 글을 띄운다(`Photos/PhotoScout.swift`).
+        config.userContentController.addScriptMessageHandler(ScoutBridge(), contentWorld: .page, name: Constants.scoutMessage)
 
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = coordinator
