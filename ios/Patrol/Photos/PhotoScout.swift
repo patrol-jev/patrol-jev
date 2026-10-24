@@ -18,10 +18,41 @@ import WebKit
 ///   { op: "enable" }                       → 권한을 묻는다. { ok, auth }
 ///   { op: "scan", since, max }             → since(ms) 뒤에 생긴 사진을 새 것부터 max 장. { ok, photos: [{ id, name, takenAt, lat, lng, data }], latest }
 ///   { op: "notify", title, body, path }    → 기기 알림 하나. 누르면 path 를 연다. { ok }
+///   { op: "mark", on }                     → 자동 보기를 켰다 · 껐다. 켠 기기만 백그라운드 틈을 잡는다(`BackgroundScout`). { ok }
+///   { op: "done", looked, notable }        → 백그라운드에서 찌른 자동 보기가 끝났다. { ok }
 final class ScoutBridge: NSObject, WKScriptMessageHandlerWithReply {
     /// 넘기는 사본의 긴 변. 웹 즉시 감지(800)보다 조금 크게 두고 웹이 다시 줄인다.
     static let edge: CGFloat = 1000
     static let maxPhotos = 30
+    private static let onKey = "scoutOn"
+    private static let latestKey = "scoutLatest"
+    private static var defaults: UserDefaults { UserDefaults(suiteName: Constants.appGroupID) ?? .standard }
+
+    /// 웹이 자동 보기를 켜 두었는가. 백그라운드 틈은 이 기기만 잡는다.
+    static var isOn: Bool {
+        get { defaults.bool(forKey: onKey) }
+        set { defaults.set(newValue, forKey: onKey) }
+    }
+
+    /// 마지막으로 넘긴 사진 가운데 가장 늦은 시각(ms). 백그라운드에서 「새 사진이 있나」 를 셀 때 기준.
+    static var lastLatest: Double {
+        get { defaults.double(forKey: latestKey) }
+        set { defaults.set(newValue, forKey: latestKey) }
+    }
+
+    /// since 뒤에 생긴 사진(캡처 제외) 수. 사본은 안 만든다. 백그라운드에서 「돌릴 일이 있나」 만 본다.
+    static func newCount(since: Double) -> Int {
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        guard status == .authorized || status == .limited else { return 0 }
+        let options = PHFetchOptions()
+        options.predicate = NSPredicate(format: "mediaType == %d AND creationDate > %@", PHAssetMediaType.image.rawValue, Date(timeIntervalSince1970: since / 1000) as NSDate)
+        options.fetchLimit = maxPhotos
+        var count = 0
+        PHAsset.fetchAssets(with: options).enumerateObjects { asset, _, _ in
+            if !asset.mediaSubtypes.contains(.photoScreenshot) { count += 1 }
+        }
+        return count
+    }
 
     func userContentController(
         _ userContentController: WKUserContentController,
@@ -47,8 +78,17 @@ final class ScoutBridge: NSObject, WKScriptMessageHandlerWithReply {
             let since = body["since"] as? Double ?? 0
             let max = min(Self.maxPhotos, body["max"] as? Int ?? Self.maxPhotos)
             scan(since: since, max: max) { photos, latest in
+                Self.lastLatest = Swift.max(Self.lastLatest, latest)
                 replyHandler(["ok": true, "photos": photos, "latest": latest], nil)
             }
+        case "mark":
+            Self.isOn = body["on"] as? Bool ?? false
+            if Self.isOn, Self.lastLatest == 0 { Self.lastLatest = Date().timeIntervalSince1970 * 1000 }
+            BackgroundScout.shared.schedule()
+            replyHandler(["ok": true], nil)
+        case "done":
+            BackgroundScout.shared.done()
+            replyHandler(["ok": true], nil)
         case "notify":
             let title = (body["title"] as? String ?? "").trimmingCharacters(in: .whitespaces)
             let text = (body["body"] as? String ?? "").trimmingCharacters(in: .whitespaces)

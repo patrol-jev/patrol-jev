@@ -22,6 +22,15 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- 새 사진 자동 보기의 백그라운드 새로고침. 식별자는 Photos/BackgroundScout.swift 와 같다. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>kr.ai.patrol.scout</string>
+	</array>
 	<!-- 세로 하나만 지원하는 앱은 전체 화면 앱이어야 올라간다. 아이패드 멀티태스킹을 안 하겠다는 선언이다. -->
 	<key>UIRequiresFullScreen</key>
 	<true/>

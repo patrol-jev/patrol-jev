@@ -70,6 +70,8 @@ final class WebViewHostController: UIViewController {
         ])
 
         coordinator?.webView = webView
+        // 백그라운드 틈에 자동 보기를 찌를 때 쓴다.
+        BackgroundScout.shared.webView = webView
 
         // 앱을 덮을 때 위젯 숫자를 맞춘다. 일지를 만든 직후가 대개 이때다.
         NotificationCenter.default.addObserver(
