@@ -21,6 +21,7 @@ import { downloadBytes, recropJpeg } from "@/ui/hwpx-photo";
 import { loadPhotos, savePhotos, type DayPhotos } from "@/ui/photo-store";
 import { readDays, readRuns, runsBetween, saveDay, summarise, type DayRecord } from "@/ui/usage";
 import { WorkLine } from "@/ui/work-line";
+import { keepUploadedForm } from "@/ui/form-bridge";
 import { pickedLine, type Picked } from "@/ui/pick";
 
 /**
@@ -110,14 +111,33 @@ export function PeriodReport({
   const inWeek = useMemo(() => weekDays(days, period), [days, period]);
   const toCheck = useMemo(() => summary.details.filter((line) => line.checks.length > 0), [summary]);
   const proofShots = summary.proof.inside + summary.proof.outside + summary.proof.unknown;
+  /** 이 카드에서 양식을 올리면 하나 오른다. 양식 단추가 그 자리에서 바로 따라오게. */
+  const [formVersion, setFormVersion] = useState(0);
   const form = useMemo(() => {
     void busy; // 양식을 새로 올리거나 지운 뒤 단추가 따라오게, 일이 끝날 때마다 다시 읽는다.
+    void formVersion;
     return mounted && weekForm ? weekForm() : null;
-  }, [mounted, weekForm, busy]);
+  }, [mounted, weekForm, busy, formVersion]);
   const pForm = useMemo(() => {
     void busy;
+    void formVersion;
     return mounted && periodForm ? periodForm() : null;
-  }, [mounted, periodForm, busy]);
+  }, [mounted, periodForm, busy, formVersion]);
+
+  /** 카드 안에서 부서 양식 올리기. 주간 일지는 일지 양식, 결과 보고서는 결과 보고서 양식이다. 올리면 이 브라우저에 남는다. */
+  const uploadForm = async (file: File) => {
+    setBusy("양식");
+    try {
+      await keepUploadedForm(file, preset?.want === "weekly" ? "ilji" : "period");
+      setFormVersion((n) => n + 1);
+      onChanged();
+      setSaid("양식을 올렸어요. 이제 부서 양식으로 나와요.");
+    } catch (cause) {
+      setSaid(cause instanceof Error ? cause.message : "양식을 읽지 못했습니다.");
+    } finally {
+      setBusy(null);
+    }
+  };
 
   useEffect(() => {
     if (!said) return;
@@ -329,7 +349,26 @@ export function PeriodReport({
         {periodRuns.length > 0 && <WorkLine work={work} runs={periodRuns} head="이 기간에 도구가 한 일" />}
         {days.length === 0 && <p className="text-[11.5px] text-[var(--muted)]">이 기기에는 아직 지난 일지가 없어요. 아래에 사진을 올려 일지를 먼저 만들면 여기 숫자가 차요.</p>}
         {days.length > 0 && (weeklyPick ? inWeek.length === 0 : summary.days === 0) && <p className="text-[11.5px] text-[var(--muted)]">이 기간에는 일지가 없어요. 아래에 그 기간의 사진을 올리면 일지가 만들어지고 여기 숫자가 차요.</p>}
-        {wantOffice && !haveOffice && <p className="text-[11.5px] text-[var(--muted)]">부서 양식이 이 브라우저에 없어 기본 양식으로 냅니다.</p>}
+        {!haveOffice && (
+          <p className="text-[11.5px] text-[var(--muted)]">
+            {wantOffice ? "부서 양식이 이 브라우저에 없어 기본 양식으로 냅니다. " : "부서 양식이 아직 없어요. "}
+            <label className="cursor-pointer underline underline-offset-2" style={{ color: "var(--ink)" }}>
+              {busy === "양식" ? "읽는 중" : weeklyPick ? "부서 일지 양식 올리기" : "결과 보고서 양식 올리기"}
+              <input
+                type="file"
+                accept=".hwpx"
+                className="hidden"
+                disabled={busy !== null}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) void uploadForm(file);
+                }}
+              />
+            </label>
+            {" "}(.hwpx · 한 번 올리면 이 브라우저에 남아 다음부터 바로 나와요)
+          </p>
+        )}
         {!weeklyPick && toCheck.length > 0 && (
           <details className="rounded-lg px-2.5 py-1.5 text-[11.5px]" style={{ border: "1px solid var(--line)" }}>
             <summary className="cursor-pointer">
@@ -350,6 +389,12 @@ export function PeriodReport({
           <button type="button" onClick={() => void act()} disabled={off} className="rounded-full px-5 py-2.5 text-[13px] font-semibold" style={primary(off)}>
             <span className={wantOffice && haveOffice ? "iri-text" : ""}>{busy ? "만드는 중" : `${pickedLine(preset)} 받기`}</span>
           </button>
+          {!wantOffice && haveOffice && (
+            // 기본 양식을 골랐어도 부서 양식이 있으면 한 단추로. 보고서 탭까지 안 내려가게.
+            <button type="button" onClick={() => void (weeklyPick ? makeWeeklyForm() : makePeriodForm())} disabled={off} className="rounded-full px-4 py-2 text-[12.5px] font-semibold" style={secondary(off)}>
+              <span className="iri-text">부서 양식 받기</span>
+            </button>
+          )}
           {!weeklyPick && (
             <button type="button" onClick={copy} disabled={nothing} className="rounded-full px-3 py-2 text-[12px]" style={secondary(nothing)}>
               글 복사

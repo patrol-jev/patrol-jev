@@ -142,6 +142,22 @@ export async function fillKeptForm(collect: (ratio: number) => Promise<IljiSlots
   return kept ? fillWith(kept, collect, date) : null;
 }
 
+/**
+ * 결과 카드 · 보고서 카드에서 바로 양식을 올릴 때. 칸 지도를 받아 이 브라우저에 기억하고 파일 이름을 돌려준다.
+ * 보고서 탭의 「양식 올리기」와 같은 길이다. 양식을 올리러 탭을 찾아가지 않게 그 자리에서 올린다.
+ */
+export async function keepUploadedForm(file: File, kind: "ilji" | "period"): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (kind === "period") {
+    const map = await mapOf<PeriodFormMap>(file, "period");
+    writeKeptPeriod({ name: file.name, data: toBase64(bytes), map });
+  } else {
+    const map = await mapOf<FormMap>(file, "ilji");
+    writeKept({ name: file.name, data: toBase64(bytes), map });
+  }
+  return file.name;
+}
+
 export function FormBridge({
   collect,
   date,
