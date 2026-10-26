@@ -376,10 +376,21 @@ export default function PatrolApp({
 
   /** 보고서 자리. 결과 카드의 「글 보기 · 고치기」가 여기로 화면을 내린다. 단추를 눌렀는데 화면이 그대로면 안 눌린 줄 안다. */
   const reportRef = useRef<HTMLDivElement | null>(null);
-  const openReport = useCallback(() => {
+  /** 부서 양식 올리는 자리. 양식이 아직 없는 브라우저에서 「부서 양식 받기」를 누르면 여기로 내린다. */
+  const formRef = useRef<HTMLDivElement | null>(null);
+  const openReport = useCallback((to: "report" | "form" = "report") => {
     setStage("report");
-    requestAnimationFrame(() => reportRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    requestAnimationFrame(() => (to === "form" ? formRef : reportRef).current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }, []);
+  /** 결과 카드의 「부서 양식 받기」. 올려 둔 양식이 있으면 바로 채우고, 없으면 올리는 자리로 데려간다. */
+  const getOffice = useCallback(() => {
+    if (officeIljiName) {
+      void getResult("office");
+      return;
+    }
+    setResultNote("부서 양식을 아직 안 올렸어요. 아래에서 본인 동 양식(.hwpx)을 한 번 올리면 다음부터 바로 나와요.");
+    openReport("form");
+  }, [getResult, officeIljiName, openReport]);
 
   /**
    * 보고서 · 주간 일지를 뽑는 길에서 사진을 올려 회차가 끝났다. 그 날이 고른 기간 밖이면 기간을 그 날이 든 주 · 달로 옮겨서 보인다.
@@ -1202,15 +1213,13 @@ export default function PatrolApp({
               busy={resultBusy || busy}
               note={resultNote}
               onGet={() => void getResult()}
-              // 고른 양식의 반대쪽도 한 단추로. 부서 양식은 이 브라우저에 올려 둔 것이 있을 때만.
+              // 고른 양식의 반대쪽도 한 단추로. 부서 양식이 아직 없으면 올리는 자리로 데려간다.
               alt={
                 pick.form === "office"
                   ? { label: "기본 양식 받기", onGet: () => void getResult("basic") }
-                  : officeIljiName
-                    ? { label: "부서 양식 받기", office: true, onGet: () => void getResult("office") }
-                    : null
+                  : { label: "부서 양식 받기", office: true, onGet: getOffice }
               }
-              onDetail={openReport}
+              onDetail={() => openReport()}
               onOther={() => {
                 setPick(null);
                 setStage("home");
@@ -1390,15 +1399,17 @@ export default function PatrolApp({
                   edits,
                 }}
               />
-              <ReportExtras
-                collect={collectSlots}
-                date={date}
-                onFilled={() => {
-                  // 부서 양식 파일로 받아 갔으면 복사한 것과 같다. 회차가 끝난 것으로 센다.
-                  setCopied(true);
-                  setLogVersion((n) => n + 1);
-                }}
-              />
+              <div ref={formRef} className="scroll-mt-4">
+                <ReportExtras
+                  collect={collectSlots}
+                  date={date}
+                  onFilled={() => {
+                    // 부서 양식 파일로 받아 갔으면 복사한 것과 같다. 회차가 끝난 것으로 센다.
+                    setCopied(true);
+                    setLogVersion((n) => n + 1);
+                  }}
+                />
+              </div>
               <ReportView
                 secondary={officeIljiName !== null}
                 report={report}
