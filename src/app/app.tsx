@@ -349,27 +349,37 @@ export default function PatrolApp({
    * 뽑기에서 고른 양식으로 순찰일지를 바로 낸다. 부서 양식을 골랐는데 이 브라우저에 없으면 기본 양식으로 내고 그렇다고 적는다.
    * 보고서 탭의 두 단추와 같은 코드다. 고르는 일은 홈에서 끝났으니 여기서는 결과만.
    */
-  const getResult = useCallback(async () => {
-    setResultBusy(true);
-    setResultNote(null);
-    try {
-      if (pick?.form === "office") {
-        const note = await fillKeptForm(collectSlots, date);
-        if (note !== null) {
-          setResultNote(note);
-          setCopied(true);
-          return;
+  const getResult = useCallback(
+    async (form: "office" | "basic" = pick?.form ?? "basic") => {
+      setResultBusy(true);
+      setResultNote(null);
+      try {
+        if (form === "office") {
+          const note = await fillKeptForm(collectSlots, date);
+          if (note !== null) {
+            setResultNote(note);
+            setCopied(true);
+            return;
+          }
+          setResultNote("부서 양식이 이 브라우저에 없어 기본 양식으로 냈어요.");
         }
-        setResultNote("부서 양식이 이 브라우저에 없어 기본 양식으로 냈어요.");
+        await makeHwpx();
+        setResultNote((current) => current ?? "기본 양식으로 내려받았어요.");
+      } catch (cause) {
+        setResultNote(cause instanceof Error ? cause.message : "파일을 만들지 못했어요.");
+      } finally {
+        setResultBusy(false);
       }
-      await makeHwpx();
-      setResultNote((current) => current ?? "기본 양식으로 내려받았어요.");
-    } catch (cause) {
-      setResultNote(cause instanceof Error ? cause.message : "파일을 만들지 못했어요.");
-    } finally {
-      setResultBusy(false);
-    }
-  }, [collectSlots, date, makeHwpx, pick]);
+    },
+    [collectSlots, date, makeHwpx, pick],
+  );
+
+  /** 보고서 자리. 결과 카드의 「글 보기 · 고치기」가 여기로 화면을 내린다. 단추를 눌렀는데 화면이 그대로면 안 눌린 줄 안다. */
+  const reportRef = useRef<HTMLDivElement | null>(null);
+  const openReport = useCallback(() => {
+    setStage("report");
+    requestAnimationFrame(() => reportRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }, []);
 
   /**
    * 보고서 · 주간 일지를 뽑는 길에서 사진을 올려 회차가 끝났다. 그 날이 고른 기간 밖이면 기간을 그 날이 든 주 · 달로 옮겨서 보인다.
@@ -1192,7 +1202,15 @@ export default function PatrolApp({
               busy={resultBusy || busy}
               note={resultNote}
               onGet={() => void getResult()}
-              onDetail={() => setStage("report")}
+              // 고른 양식의 반대쪽도 한 단추로. 부서 양식은 이 브라우저에 올려 둔 것이 있을 때만.
+              alt={
+                pick.form === "office"
+                  ? { label: "기본 양식 받기", onGet: () => void getResult("basic") }
+                  : officeIljiName
+                    ? { label: "부서 양식 받기", office: true, onGet: () => void getResult("office") }
+                    : null
+              }
+              onDetail={openReport}
               onOther={() => {
                 setPick(null);
                 setStage("home");
@@ -1361,7 +1379,7 @@ export default function PatrolApp({
           )}
 
           {stage === "report" && (
-            <>
+            <div ref={reportRef} className="flex flex-col gap-4 scroll-mt-4">
               {/* 이 회차에 모델이 한 것 · 코드가 한 것 · 사람이 한 것. 일지 바로 위에 붙어 받는 사람도 같이 본다. */}
               <WorkLine
                 head="이 회차에 도구가 한 일"
@@ -1404,7 +1422,7 @@ export default function PatrolApp({
                 onHwpx={makeHwpx}
               />
               <AddMore onFiles={take} busy={busy} />
-            </>
+            </div>
           )}
         </>
       )}
@@ -1474,6 +1492,7 @@ function ResultCard({
   busy,
   note,
   onGet,
+  alt,
   onDetail,
   onOther,
 }: {
@@ -1482,6 +1501,8 @@ function ResultCard({
   busy: boolean;
   note: string | null;
   onGet: () => void;
+  /** 고른 양식의 반대쪽(기본 ↔ 부서). 없으면 단추가 안 뜬다. */
+  alt?: { label: string; office?: boolean; onGet: () => void } | null;
   onDetail: () => void;
   onOther: () => void;
 }) {
@@ -1495,6 +1516,12 @@ function ResultCard({
         <button type="button" onClick={onGet} disabled={busy} className="rounded-full px-5 py-2.5 text-[13px] font-semibold" style={{ background: "var(--ink)", color: "var(--paper)", opacity: busy ? 0.5 : 1 }}>
           {busy ? "만드는 중" : `${line} 받기`}
         </button>
+        {alt && (
+          <button type="button" onClick={alt.onGet} disabled={busy} className="rounded-full px-4 py-2 text-[12.5px] font-semibold" style={{ border: "1px solid var(--line)", opacity: busy ? 0.5 : 1 }}>
+            {/* 부서 양식 글자만 Jev 빛. 달력의 「부서 양식」 단추와 같은 결. */}
+            <span className={alt.office ? "iri-text" : ""}>{alt.label}</span>
+          </button>
+        )}
         <button type="button" onClick={onDetail} className="rounded-full px-3 py-2 text-[12px]" style={{ border: "1px solid var(--line)" }}>
           글 보기 · 고치기
         </button>
