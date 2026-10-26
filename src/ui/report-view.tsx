@@ -17,6 +17,7 @@ export function ReportView({
   onReset,
   edited,
   onHwpx,
+  secondary = false,
 }: {
   report: Report;
   /** 화면에 보이고 복사되는 글. 사람이 고쳤으면 고친 글이다. */
@@ -27,6 +28,8 @@ export function ReportView({
   edited: boolean;
   /** 한글 파일 만들기. 끝나면 내려받기가 시작된다. */
   onHwpx: () => Promise<void>;
+  /** 부서 양식이 먼저 있는 화면. 기본 양식은 둘째 길이라 조용한 단추로 보인다. */
+  secondary?: boolean;
 }) {
   const [making, setMaking] = useState(false);
   const [hwpxError, setHwpxError] = useState<string | null>(null);
@@ -50,9 +53,11 @@ export function ReportView({
         style={{ background: "var(--paper)", border: "1px solid var(--line)" }}
       >
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-medium">한글 파일로 받기</p>
+          <p className="text-[13px] font-medium">{secondary ? "기본 양식으로 받기" : "한글 파일로 받기"}</p>
           <p className="text-[11px] text-[var(--muted)]">
-            아래 글을 그대로 담은 기본 양식(.hwpx)입니다. 전 · 후 사진도 같이 채웁니다. 이 브라우저 안에서 만들어집니다.
+            {secondary
+              ? "부서 양식이 위에 있습니다. 아래 글을 그대로 담은 기본 양식(.hwpx)으로, 부서 양식 없이 볼 때 씁니다."
+              : "아래 글을 그대로 담은 기본 양식(.hwpx)입니다. 전 · 후 사진도 같이 채웁니다. 이 브라우저 안에서 만들어집니다."}
           </p>
           {hwpxError && <p className="mt-1 text-[11px]" style={{ color: "var(--ink)" }}>{hwpxError}</p>}
         </div>
@@ -60,10 +65,18 @@ export function ReportView({
           onClick={makeHwpx}
           disabled={making}
           className="rounded-md px-3 py-1.5 text-[12px] font-semibold"
-          style={{ background: "var(--ink)", opacity: making ? 0.6 : 1 }}
+          style={
+            secondary
+              ? { border: "1px solid var(--line)", color: "var(--ink)", opacity: making ? 0.6 : 1 }
+              : { background: "var(--ink)", opacity: making ? 0.6 : 1 }
+          }
         >
-          {/* 글자만 Jev 빛. 사용자 지시(2026-09-24). 값을 그리는 자리가 아니라 산출로 가는 단추 하나뿐이다. */}
-          <span className="iri-text">{making ? "만드는 중" : "한글 파일(.hwpx)"}</span>
+          {/* 글자만 Jev 빛. 사용자 지시(2026-09-24). 값을 그리는 자리가 아니라 산출로 가는 단추 하나뿐이다. 둘째 길이면 빛 없이. */}
+          {secondary ? (
+            <span>{making ? "만드는 중" : "기본 양식(.hwpx)"}</span>
+          ) : (
+            <span className="iri-text">{making ? "만드는 중" : "한글 파일(.hwpx)"}</span>
+          )}
         </button>
       </div>
 

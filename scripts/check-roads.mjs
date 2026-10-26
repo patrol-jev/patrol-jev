@@ -9,7 +9,7 @@
  * 고치는 규칙은 `src/core/roads.ts` 한 곳에 있습니다. 그 파일을 고쳤으면 이걸 돌리세요.
  */
 
-import { readAddress } from "../src/core/roads.ts";
+import { readAddress, readAddressInText } from "../src/core/roads.ts";
 
 /** 지어낸 동 하나. 실제 색인도 이 꼴이다(`npm run roads:build` 가 만든다). */
 const INDEX = {
@@ -90,6 +90,28 @@ check("간판은 주소가 아니다", readAddress("행복식당 010-0000-0000",
   const got = readAddress("가나로1길 9-2", INDEX);
   if (got.exists !== true) problems.push("있는 번호를 확인하지 못했다");
   else console.log("OK   있는 번호는 확인으로 남는다");
+}
+
+// ── 주소판 글자를 못 받았을 때, 옮겨 적은 글에서 주소판 꼴을 대조로 찾는다(09-27 실물: 한 장이 sign_text 없이 왔다).
+check("번호 줄 · 도로명 줄 · 로마자 줄이면 주소판", readAddressInText("14\n가나로1나길\nGana-ro 1na-gil\n카메라\n2026년 9월 14일 오전 7:02", INDEX)?.text, "가나로1나길 14");
+check("도로명 줄이 뒤에 와도 찾는다", readAddressInText("카메라\n가나로13길\n27", INDEX)?.text, "가나로13길 27");
+check("한 줄에 붙은 「도로명 번호」(간판·안내판)는 안 잡는다", readAddressInText("CCTV 작동중\n가나로 58\nGana-ro", INDEX), null);
+check("색인에 없는 도로명은 안 잡는다", readAddressInText("13\n마바로1길\nMaba-ro", INDEX), null);
+check("비슷한 이름으로 고쳐 잡지 않는다", readAddressInText("13\n카나로1나길\n", INDEX), null);
+check("번호 줄이 없으면 안 잡는다", readAddressInText("가나로1나길\nGana-ro", INDEX), null);
+check("도로명이 둘이면 고르지 않는다", readAddressInText("12\n가나로\n7\n다라로", INDEX), null);
+check("색인이 없으면 읽지 않는다", readAddressInText("13\n가나로1나길", null), null);
+// 파란 표준판이 아닌 판: 건물 이름판에 지번·도로명 주소가 한 줄씩(09-27 실물 사진). 번호가 색인에 있을 때만 받는다.
+check("한 줄 「도로명 번호」는 그 번호가 색인에 있으면 받는다", readAddressInText("○○동천\n○○동 399-25\n가나로 14\n설계 ○○, 시공 ○○\n카메라\n2026년 9월 11일 오전 10:01", INDEX)?.text, "가나로 14");
+check("한 줄 꼴은 번호가 색인에 없으면 안 받는다(안내판의 주소)", readAddressInText("CCTV 작동중\n가나로 58\nGana-ro", INDEX), null);
+check("안내문 한 줄 속에 섞인 주소는 안 받는다", readAddressInText("CCTV 작동중 가나로 14 촬영중", INDEX), null);
+check("두 줄 꼴과 한 줄 꼴이 같은 주소면 하나로 받는다", readAddressInText("14\n가나로1나길\n가나로1나길 14", INDEX)?.text, "가나로1나길 14");
+check("두 꼴이 다른 주소를 가리키면 고르지 않는다", readAddressInText("14\n가나로1나길\n가나로 12", INDEX), null);
+{
+  checked++;
+  const got = readAddressInText("13\n가나로1나길\nGana-ro", INDEX);
+  if (got?.exists !== false || got?.known !== true) problems.push("찾은 주소도 번호 확인을 거쳐야 한다");
+  else console.log("OK   찾은 주소도 번호 확인을 거친다(13 은 그 길에 없음)");
 }
 
 if (problems.length > 0) {

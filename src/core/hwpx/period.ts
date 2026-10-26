@@ -112,6 +112,7 @@ export function buildPeriodHwpx(slots: PeriodSlots): Uint8Array {
       blocks.push(photoTable({ fills, binaries, thin, section, photo, head, id: tableId(), zOrder: nextId }));
     });
   }
+
   if (fills.specs.length !== registered) throw new Error("사진 표가 새 테두리를 등록했다. 그림 채움 번호가 밀린다.");
 
   const header = buildHeader(fills, binaries.map((b) => b.id));

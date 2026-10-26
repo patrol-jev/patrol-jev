@@ -20,8 +20,15 @@
  */
 
 export type ExifTime = { date: string; time: string; stamp: number };
+/** 찍힌 자리. 위도·경도(WGS84, 도 단위). */
+export type ExifGps = { lat: number; lng: number };
 
 const TAG_EXIF_IFD = 0x8769;
+const TAG_GPS_IFD = 0x8825;
+const TAG_GPS_LAT_REF = 0x0001;
+const TAG_GPS_LAT = 0x0002;
+const TAG_GPS_LNG_REF = 0x0003;
+const TAG_GPS_LNG = 0x0004;
 const TAG_TAKEN = 0x9003;
 const TAG_DIGITIZED = 0x9004;
 /** 파일 수정 시각(첫 목록). 시각으로는 안 쓰고, 못 읽을 때 무슨 글자가 있는지 보이는 데만 쓴다. */
@@ -85,6 +92,88 @@ export function explainExifTime(bytes: Uint8Array): { time: ExifTime | null; why
 }
 
 const XMP_HEAD = "http://ns.adobe.com/xap/1.0/";
+
+/**
+ * 찍힌 자리(GPS). 시각과 같은 길로 읽는다. 첫 목록에서 GPS 목록의 자리(0x8825) → 위도·경도.
+ * EXIF 가 뭉개진 파일은 XMP(`exif:GPSLatitude="37,33.1234N"`)에서 한 번 더.
+ * **JPEG 만 읽는다.** HEIC 는 시각과 마찬가지로 부르는 쪽(`src/ui/photo.ts`)이 exifr 로 읽는다.
+ *
+ * 읽는 것은 위도·경도 둘뿐이다. 고도·방향·시각은 안 읽는다. 값은 브라우저를 떠나지 않는다.
+ * 모델로 가는 사본은 그림판(canvas)에서 다시 만든 것이라 기록(EXIF)이 통째로 없다.
+ */
+export function readExifGps(bytes: Uint8Array): ExifGps | null {
+  const fromExif = readGpsIfd(bytes);
+  if (fromExif) return fromExif;
+  return readXmpGps(bytes);
+}
+
+function readGpsIfd(bytes: Uint8Array): ExifGps | null {
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  const tiff = findTiff(bytes);
+  if (tiff === null) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const order = String.fromCharCode(bytes[tiff], bytes[tiff + 1]);
+  if (order !== "II" && order !== "MM") return null;
+  const little = order === "II";
+  const u16 = (at: number) => (at + 2 <= bytes.length ? view.getUint16(at, little) : null);
+  const u32 = (at: number) => (at + 4 <= bytes.length ? view.getUint32(at, little) : null);
+  if (u16(tiff + 2) !== 42) return null;
+  const first = u32(tiff + 4);
+  if (first === null) return null;
+
+  const gpsAt = findEntry(tiff, first, TAG_GPS_IFD, u16, u32);
+  if (!gpsAt) return null;
+  const gpsIfd = u32(gpsAt + 8);
+  if (gpsIfd === null) return null;
+
+  const degrees = (tag: number): number | null => {
+    const entry = findEntry(tiff, gpsIfd, tag, u16, u32);
+    if (!entry || u16(entry + 2) !== 5 || u32(entry + 4) !== 3) return null;
+    const at = tiff + (u32(entry + 8) ?? -1);
+    if (at < 0 || at + 24 > bytes.length) return null;
+    const part = (i: number) => {
+      const numerator = u32(at + i * 8) ?? 0;
+      const denominator = u32(at + i * 8 + 4) ?? 0;
+      return denominator === 0 ? 0 : numerator / denominator;
+    };
+    return part(0) + part(1) / 60 + part(2) / 3600;
+  };
+  const ref = (tag: number): string => {
+    const entry = findEntry(tiff, gpsIfd, tag, u16, u32);
+    return entry ? (asciiOf(bytes, tiff, entry, u16, u32) ?? "") : "";
+  };
+  const lat = degrees(TAG_GPS_LAT);
+  const lng = degrees(TAG_GPS_LNG);
+  if (lat === null || lng === null) return null;
+  return checkedGps(ref(TAG_GPS_LAT_REF).startsWith("S") ? -lat : lat, ref(TAG_GPS_LNG_REF).startsWith("W") ? -lng : lng);
+}
+
+/** XMP 의 `exif:GPSLatitude="37,33.1234N"` 또는 `"37,33,45.6N"` 꼴. */
+function readXmpGps(bytes: Uint8Array): ExifGps | null {
+  const xmp = findXmp(bytes);
+  if (xmp === null) return null;
+  const read = (name: string): number | null => {
+    const text = new RegExp(`${name}="([^"]{3,40})"`).exec(xmp)?.[1] ?? new RegExp(`<${name}>([^<]{3,40})</${name}>`).exec(xmp)?.[1];
+    if (!text) return null;
+    const m = /^(-?\d+(?:\.\d+)?),(\d+(?:\.\d+)?)(?:,(\d+(?:\.\d+)?))?([NSEW])?$/.exec(text.trim());
+    if (!m) return null;
+    const value = Math.abs(Number(m[1])) + Number(m[2]) / 60 + (m[3] ? Number(m[3]) / 3600 : 0);
+    const negative = m[4] === "S" || m[4] === "W" || m[1].startsWith("-");
+    return negative ? -value : value;
+  };
+  const lat = read("exif:GPSLatitude");
+  const lng = read("exif:GPSLongitude");
+  if (lat === null || lng === null) return null;
+  return checkedGps(lat, lng);
+}
+
+/** 0,0 이나 범위 밖은 없는 것으로 친다. 찍은 자리가 아니라 빈 값이다. */
+export function checkedGps(lat: number, lng: number): ExifGps | null {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  if (Math.abs(lat) < 0.001 && Math.abs(lng) < 0.001) return null;
+  return { lat, lng };
+}
 
 /**
  * XMP 칸의 촬영 시각. 세 이름을 차례로 본다: `exif:DateTimeOriginal` · `photoshop:DateCreated` ·

@@ -42,6 +42,8 @@ export interface Cell {
   vertAlign?: "TOP" | "CENTER";
   /** 줄마다 모양이 다를 때(제목 상자). 주면 `lines` 대신 이것을 쓴다. */
   paras?: Para[];
+  /** 셀 안 여백(좌우 · 위아래). 안 주면 표의 여백(140)을 따른다. */
+  margin?: { side: number; edge: number };
 }
 
 export function cell(c: Cell, defaultFill: number): string {
@@ -54,7 +56,7 @@ export function cell(c: Cell, defaultFill: number): string {
       : c.lines.map((line) => paragraph({ text: line, char, para })).join("");
   return tag(
     "hp:tc",
-    { name: "", header: 0, hasMargin: 0, protect: 0, editable: 0, dirty: 0, borderFillIDRef: c.fill ?? defaultFill },
+    { name: "", header: 0, hasMargin: c.margin ? 1 : 0, protect: 0, editable: 0, dirty: 0, borderFillIDRef: c.fill ?? defaultFill },
     tag(
       "hp:subList",
       {
@@ -74,7 +76,7 @@ export function cell(c: Cell, defaultFill: number): string {
       tag("hp:cellAddr", { colAddr: c.col, rowAddr: c.row }) +
       tag("hp:cellSpan", { colSpan: c.colSpan ?? 1, rowSpan: c.rowSpan ?? 1 }) +
       tag("hp:cellSz", { width: c.width, height: c.height }) +
-      tag("hp:cellMargin", { left: 140, right: 140, top: 140, bottom: 140 }),
+      tag("hp:cellMargin", c.margin ? { left: c.margin.side, right: c.margin.side, top: c.margin.edge, bottom: c.margin.edge } : { left: 140, right: 140, top: 140, bottom: 140 }),
   );
 }
 

@@ -27,6 +27,30 @@
   --jev-3: #a3e635;
   --jev-4: #ffb4a2;
   --jev: linear-gradient(100deg, var(--jev-1) 0%, var(--jev-2) 36%, var(--jev-3) 68%, var(--jev-4) 100%);
+
+  /*
+    구역 화면(`/office`)에만 쓰는 초록 계단.
+
+    ⚠ 위의 색 규칙을 깨는 것이 아니다. 저 규칙은 **판정을 보여 주는 화면**의 규칙이고,
+    구역 화면에는 Jev 값도 생성 모델의 글도 없다. 여기서 초록이 말하는 것은 하나다.
+    **얼마나 쓰고 있는가.** 진할수록 많이 쓴 곳, 옅을수록 아직인 곳.
+    순찰이 도는 자리가 골목과 나무라서 숲의 색으로 둔다.
+  */
+  --forest-0: #e9ede5;
+  --forest-1: #cfe0c5;
+  --forest-2: #a6c89a;
+  --forest-3: #6e9a62;
+  --forest-4: #3f6b3c;
+  --forest-line: #ffffff;
+  --forest-ink: #22412a;
+  --forest-hush: #f2f5ef;
+
+  /*
+    위험 일지(`/risk`)의 「어디 사진인가」 두 가지. 고른 단추의 테두리와 사진 찍기 카드의 점선, 두 자리에만 쓴다. 바탕 · 띠에는 안 쓴다.
+    거리 = 쇠빛 파랑, 작업장 = 흙빛 갈색. 빨강(위험도) · 호박(법령 개정) · 무지개(Jev) · 회색(모델의 글)과 겹치지 않는다.
+  */
+  --scope-street: #5b7fb5;
+  --scope-work: #b8742a;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -38,6 +62,19 @@
     --line: #26262a;
     --gen: #3b3b40;
     --gen-strong: #8b8a85;
+
+    /* 밤에는 숲이 어두워진다. 계단의 방향은 같다. 진할수록 많이 쓴 곳. */
+    --forest-0: #1a1f1b;
+    --forest-1: #26352a;
+    --forest-2: #35503a;
+    --forest-3: #4d7452;
+    --forest-4: #74a068;
+    --forest-line: #0b0b0d;
+    --forest-ink: #d9e7d9;
+    --forest-hush: #121612;
+
+    --scope-street: #7a9fd4;
+    --scope-work: #d2904a;
   }
 }
 
@@ -149,4 +186,901 @@ body {
 .tnum {
   font-family: var(--font-mono), ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
+}
+
+/*
+  구역 화면의 입체 지도(`src/ui/office-terrain.tsx`).
+
+  이 무대만은 밤 지도다. 화면이 밝든 어둡든 같다. 등고선과 빛기둥은 어두운 바탕에서만 읽힌다.
+  색의 뜻은 위 초록 계단과 같다. 밝을수록 많이 쓴 곳.
+*/
+.terrain-stage {
+  /* 이름표의 z-index 가 이 무대 밖(번호 상자 위)으로 새지 않게 한 겹을 따로 둔다. */
+  isolation: isolate;
+  height: min(72vh, 680px);
+  min-height: 420px;
+  background:
+    radial-gradient(120% 90% at 50% 18%, #1b2a26 0%, #0d1414 55%, #070a0b 100%);
+  box-shadow: 0 30px 80px -40px rgba(0, 0, 0, 0.6);
+}
+@media (max-width: 640px) {
+  .terrain-stage {
+    height: 64vh;
+    min-height: 360px;
+  }
+}
+.terrain-panel {
+  background: rgba(10, 14, 14, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(8px);
+}
+.terrain-tag {
+  position: absolute;
+  left: 0;
+  top: 0;
+  white-space: nowrap;
+  transition: opacity 200ms;
+  will-change: transform;
+}
+/*
+  동 이름표는 **글자만** 둔다(알약·테두리 없음). 입체 조망이 가려지지 않게.
+  쓴 만큼 글자 자체가 밝은 연두로 바뀐다. 땅 위 구역 색과 같은 계단이다.
+  어두운 무리(글자 그림자)가 바탕 없이도 글자를 읽히게 한다.
+*/
+.terrain-zone {
+  pointer-events: auto;
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 0 2px;
+  font-size: 12.5px;
+  line-height: 1.2;
+  color: rgba(214, 224, 216, 0.62);
+  background: none;
+  border: 0;
+  text-shadow:
+    0 0 3px rgba(0, 0, 0, 0.95),
+    0 1px 2px rgba(0, 0, 0, 0.9),
+    0 0 10px rgba(0, 0, 0, 0.6);
+  transition: color 160ms;
+}
+.terrain-zone b {
+  font-weight: 500;
+}
+.terrain-zone span {
+  font-size: 11px;
+  opacity: 0.85;
+  font-variant-numeric: tabular-nums;
+}
+.terrain-zone[data-level="1"] {
+  color: #a9d0a0;
+}
+.terrain-zone[data-level="2"] {
+  color: #a3e392;
+}
+.terrain-zone[data-level="2"] b {
+  font-weight: 600;
+}
+.terrain-zone[data-level="3"] {
+  color: #bdf383;
+}
+.terrain-zone[data-level="3"] b,
+.terrain-zone[data-level="4"] b {
+  font-weight: 700;
+}
+.terrain-zone[data-level="4"] {
+  font-size: 13.5px;
+  color: #e1ff94;
+  text-shadow:
+    0 0 3px rgba(0, 0, 0, 0.95),
+    0 1px 2px rgba(0, 0, 0, 0.9),
+    0 0 14px rgba(180, 255, 120, 0.45);
+}
+.terrain-zone[data-on="1"] {
+  color: #ffffff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.terrain-peak {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 12px;
+  color: #f7e2a0;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+.terrain-peak b {
+  font-weight: 600;
+}
+.terrain-peak span {
+  font-size: 11px;
+  opacity: 0.85;
+  font-variant-numeric: tabular-nums;
+}
+.terrain-peak::after {
+  content: "";
+  width: 1px;
+  height: 22px;
+  margin-top: 2px;
+  background: linear-gradient(#f7e2a0, transparent);
+}
+.terrain-mark {
+  font-size: 11px;
+  color: rgba(220, 230, 235, 0.55);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+/*
+  사진 칸의 주황 사진기(`CameraMark`). 겹과 같이 숨 쉬고, 사진이 떠날 때 찰칵 한다.
+  렌즈 빛점은 칸이 넘겨 주는 --look-x/--look-y(-1~1)를 따라본다.
+*/
+.cam-float {
+  display: inline-block;
+  animation: cam-bob 2.9s ease-in-out infinite;
+}
+.cam-busy {
+  animation-duration: 1.2s;
+}
+.cam-body {
+  display: inline-block;
+  transform-origin: 50% 85%;
+}
+.cam-eye {
+  transform: translate(calc(var(--look-x, 0) * 2.6px), calc(var(--look-y, 0) * 2.2px));
+  transition: transform 180ms ease-out;
+}
+.cam-lens {
+  transform-origin: 28px 28px;
+  animation: cam-blink 6.3s ease-in-out infinite;
+}
+.cam-flash {
+  opacity: 0;
+  transform-origin: 40px 20.5px;
+}
+.cam-lines {
+  transform-origin: 28px 16px;
+  animation: cam-lines 2.9s ease-in-out infinite;
+}
+.cam-shot {
+  animation: cam-squash 520ms cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+.cam-shot .cam-flash {
+  animation: cam-flash 520ms ease-out;
+}
+.cam-shot .cam-bulb {
+  animation: cam-bulb 520ms ease-out;
+}
+@keyframes cam-bob {
+  0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+  50% { transform: translateY(-5px) rotate(1.5deg); }
+}
+@keyframes cam-blink {
+  0%, 93%, 100% { transform: scaleY(1); }
+  95.5% { transform: scaleY(0.12); }
+}
+@keyframes cam-lines {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.12); opacity: 0.7; }
+}
+@keyframes cam-squash {
+  0% { transform: scale(1, 1); }
+  22% { transform: scale(1.12, 0.84); }
+  55% { transform: scale(0.94, 1.08) translateY(-3px); }
+  100% { transform: scale(1, 1); }
+}
+@keyframes cam-flash {
+  0% { opacity: 0; transform: scale(0.2); }
+  18% { opacity: 0.95; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.6); }
+}
+@keyframes cam-bulb {
+  0%, 100% { fill: currentColor; }
+  15%, 40% { fill: #fff6e0; }
+}
+/* 위험도 막대(`RiskBar`)의 점수 기준선. 가는 빨강 점선이 위에서 아래로 토막토막 그어진다(계단 12). */
+.risk-dash {
+  animation: risk-dash-in 420ms steps(12, end) both;
+}
+@keyframes risk-dash-in {
+  from { clip-path: inset(0 0 100% 0); }
+  to { clip-path: inset(-10% 0 -10% 0); }
+}
+
+/* 위험 일지 게이지 표식(`GaugeMark`). 읽는 동안 빨강 눈금이 좌우로 훑는다. */
+.gauge-scan {
+  animation: gauge-scan 1.1s ease-in-out infinite alternate;
+}
+@keyframes gauge-scan {
+  0% { transform: translateX(-24px); }
+  100% { transform: translateX(2px); }
+}
+/* 법령 표식(`LawMark`). 개정 예정 · 개정됨이면 책갈피 리본이 흔들리고 느낌표가 숨 쉰다. */
+.law-ribbon {
+  animation: law-ribbon 2.4s ease-in-out infinite;
+}
+.law-bang {
+  transform-origin: 46px 12px;
+  animation: law-bang 2.4s ease-in-out infinite;
+}
+@keyframes law-ribbon {
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(5deg); }
+}
+@keyframes law-bang {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.12); opacity: 0.75; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cam-float, .cam-lens, .cam-lines, .cam-shot, .cam-shot .cam-flash, .cam-shot .cam-bulb, .gauge-scan, .risk-dash, .law-ribbon, .law-bang {
+    animation: none;
+  }
+}
+
+/* 지형 그림: 지역 이름표 · 청사 이름표 · 범례 */
+/* 지역(녹지·구상 지역)과 청사 이름표도 글자 색만. 남산 이름표와 같은 꼴. */
+.terrain-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  line-height: 1.2;
+  text-shadow:
+    0 0 4px rgba(0, 0, 0, 0.95),
+    0 1px 2px rgba(0, 0, 0, 0.9),
+    0 0 12px rgba(0, 0, 0, 0.6);
+}
+.terrain-area b {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.terrain-area span {
+  font-size: 10.5px;
+  opacity: 0.75;
+}
+.terrain-area-park {
+  color: #c8f7ae;
+}
+.terrain-area-district {
+  color: #bfe7ff;
+}
+.terrain-hall {
+  font-size: 14px;
+  color: #ffd27a;
+  text-shadow:
+    0 0 4px rgba(0, 0, 0, 0.95),
+    0 1px 2px rgba(0, 0, 0, 0.9),
+    0 0 14px rgba(255, 200, 110, 0.55);
+}
+.terrain-hall b {
+  font-weight: 700;
+}
+.terrain-legend li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.terrain-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 8px;
+  border-radius: 2px;
+}
+.terrain-legend span {
+  color: rgba(255, 255, 255, 0.5);
+}
+/* 판 없이 글자만 둘 때 입체 위에서도 읽히게 하는 그림자. */
+.terrain-ink {
+  text-shadow:
+    0 0 3px rgba(0, 0, 0, 0.95),
+    0 1px 2px rgba(0, 0, 0, 0.9),
+    0 0 10px rgba(0, 0, 0, 0.55);
+}
+
+/*
+  분링(`src/app/bunring/bunring-app.tsx`). 이 화면에만 쓰는 꼴이라 `.bunring` 안에 가둔다.
+
+  연보라 하늘 위에 흰 카드가 떠 있고, 첫 화면의 판은 아이소메트릭 바닥 위에 링 카메라가 떠 있다.
+  파랑(--bn-accent)은 「얼마나 왔나」 막대와 누르는 단추에만 쓴다. 재질 색은 링과 품목 그림에만.
+  무지개빛(Jev)·회색(생성 모델) 규칙은 그대로다.
+*/
+.bunring {
+  --bn-page: #f2f3fc;
+  --bn-card: #ffffff;
+  --bn-edge: #e6e8f6;
+  --bn-edge-strong: #d3d7f0;
+  --bn-sky-1: #f1f2ff;
+  --bn-sky-2: #dde2fb;
+  --bn-glow: rgba(255, 255, 255, 0.85);
+  --bn-grid: rgba(110, 124, 220, 0.17);
+  --bn-pad: rgba(255, 255, 255, 0.75);
+  --bn-pad-edge: rgba(92, 108, 236, 0.35);
+  --bn-track: #e2e5f8;
+  --bn-accent: #5262ea;
+  --bn-accent-deep: #3a48c8;
+  --bn-accent-soft: #e9ecff;
+  --bn-chain: #9aa1c4;
+  --bn-shadow: rgba(50, 60, 150, 0.12);
+  --bn-disk-1: #ffffff;
+  --bn-disk-2: #e9ecfc;
+  --bn-lift: 0 1px 2px rgba(40, 48, 120, 0.05), 0 8px 24px rgba(60, 72, 170, 0.09);
+  --bn-lift-hi: 0 2px 4px rgba(40, 48, 120, 0.06), 0 18px 40px rgba(60, 72, 170, 0.15);
+  background: var(--bn-page);
+  color: var(--ink);
+}
+@media (prefers-color-scheme: dark) {
+  .bunring {
+    --bn-page: #0d0e1b;
+    --bn-card: #171a2f;
+    --bn-edge: #252a47;
+    --bn-edge-strong: #343a60;
+    --bn-sky-1: #1b1e3a;
+    --bn-sky-2: #11132a;
+    --bn-glow: rgba(110, 124, 255, 0.14);
+    --bn-grid: rgba(150, 160, 255, 0.09);
+    --bn-pad: rgba(120, 132, 255, 0.1);
+    --bn-pad-edge: rgba(140, 152, 255, 0.35);
+    --bn-track: #2a2f55;
+    --bn-accent: #7e8cff;
+    --bn-accent-deep: #5b69e8;
+    --bn-accent-soft: #252a52;
+    --bn-chain: #5d648c;
+    --bn-shadow: rgba(0, 0, 0, 0.35);
+    --bn-disk-1: #262a4c;
+    --bn-disk-2: #171a33;
+    --bn-lift: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.32);
+    --bn-lift-hi: 0 2px 4px rgba(0, 0, 0, 0.45), 0 18px 40px rgba(0, 0, 0, 0.4);
+  }
+}
+
+.bunring .bn-card {
+  background: var(--bn-card);
+  border: 1px solid var(--bn-edge);
+  border-radius: 20px;
+  box-shadow: var(--bn-lift);
+}
+.bunring .bn-hero {
+  background:
+    radial-gradient(ellipse 60% 90% at 12% 50%, var(--bn-accent-soft), transparent 70%),
+    var(--bn-card);
+}
+.bunring .bn-well {
+  background: var(--bn-accent-soft);
+  border-radius: 16px;
+}
+.bunring .bn-row {
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bn-accent-soft) 55%, var(--bn-card));
+  transition: opacity 160ms;
+}
+.bunring .bn-row[data-off="1"] {
+  opacity: 0.55;
+}
+.bunring .bn-puck {
+  border: 3px solid var(--bn-card);
+  box-shadow:
+    0 3px 0 var(--bn-edge-strong),
+    0 10px 18px var(--bn-shadow);
+}
+
+.bunring .bn-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--bn-card);
+  border: 1px solid var(--bn-edge);
+  box-shadow: var(--bn-lift);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.bunring .bn-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 2px solid;
+  flex-shrink: 0;
+}
+.bunring .bn-dot-live {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--bn-accent);
+  animation: bn-blink 1s ease-in-out infinite;
+}
+@keyframes bn-blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* 머리띠의 둥근 아이콘 단추(공유). */
+.bunring .bn-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  color: var(--bn-accent-deep);
+  background: var(--bn-card);
+  border: 1px solid var(--bn-edge);
+  box-shadow: 0 2px 0 var(--bn-edge-strong), var(--bn-lift);
+  transition: transform 120ms;
+}
+.bunring .bn-icon-btn:active {
+  transform: translateY(2px) rotate(-8deg);
+}
+@media (prefers-color-scheme: dark) {
+  .bunring .bn-icon-btn {
+    color: var(--bn-accent);
+  }
+}
+
+/* 내 링 이름 칩(●감자링). 등급 칩 아래에 작게. */
+.bunring .bn-me {
+  padding: 4px 11px;
+  font-size: 12px;
+  gap: 5px;
+}
+.bunring a.bn-me:active,
+.bunring button.bn-me:active {
+  transform: translateY(1px);
+}
+.bunring .bn-me-empty {
+  color: var(--bn-accent-deep);
+  border-style: dashed;
+  border-color: var(--bn-edge-strong);
+  box-shadow: none;
+}
+
+/* 탭. 레퍼런스의 알약 구획 단추. */
+.bunring .bn-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bn-accent-soft) 70%, var(--bn-page));
+  border: 1px solid var(--bn-edge);
+}
+.bunring .bn-seg button {
+  padding: 7px 16px;
+  border-radius: 999px;
+  color: var(--muted);
+  transition:
+    background 160ms,
+    color 160ms,
+    box-shadow 160ms;
+}
+.bunring .bn-seg button[data-on="1"] {
+  background: var(--bn-card);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(40, 48, 120, 0.1), 0 4px 10px rgba(60, 72, 170, 0.1);
+}
+
+/* 단추. 밑에 두께를 깔아 눌리는 맛을 낸다. */
+.bunring .bn-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  background: var(--bn-card);
+  border: 1px solid var(--bn-edge-strong);
+  box-shadow: 0 2px 0 var(--bn-edge-strong);
+  transition:
+    transform 120ms,
+    box-shadow 120ms;
+}
+.bunring .bn-btn:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: 0 0 0 var(--bn-edge-strong);
+}
+.bunring .bn-btn:disabled {
+  opacity: 0.4;
+}
+.bunring .bn-btn-main {
+  color: #fff;
+  font-weight: 600;
+  border-color: var(--bn-accent-deep);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bn-accent) 80%, #fff), var(--bn-accent));
+  box-shadow:
+    0 3px 0 var(--bn-accent-deep),
+    0 8px 18px color-mix(in srgb, var(--bn-accent) 35%, transparent);
+}
+.bunring .bn-btn-main:active:not(:disabled) {
+  box-shadow: 0 0 0 var(--bn-accent-deep);
+}
+
+.bunring .bn-field {
+  height: 38px;
+  padding: 0 10px;
+  border-radius: 12px;
+  background: var(--bn-card);
+  border: 1px solid var(--bn-edge-strong);
+}
+.bunring .bn-check {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  accent-color: var(--bn-accent);
+}
+.bunring .bn-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--bn-card);
+  border: 1px solid var(--bn-edge);
+  box-shadow: 0 2px 0 var(--bn-edge);
+}
+.bunring .bn-stepper button {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  font-size: 17px;
+  line-height: 1;
+  background: var(--bn-accent-soft);
+  color: var(--bn-accent-deep);
+}
+.bunring .bn-stepper button:active {
+  transform: scale(0.92);
+}
+.bunring .bn-stepper b {
+  width: 30px;
+  text-align: center;
+  font-size: 15px;
+}
+.bunring .bn-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--bn-edge-strong);
+  background: var(--bn-card);
+  color: var(--muted);
+}
+.bunring .bn-tag[data-past="1"] {
+  color: var(--ink);
+}
+.bunring .bn-tag[data-on="1"] {
+  color: var(--bn-accent-deep);
+  border-color: var(--bn-accent);
+  background: var(--bn-accent-soft);
+  font-weight: 600;
+}
+.bunring .bn-badge {
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--bn-accent-deep);
+  background: var(--bn-accent-soft);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--bn-accent) 25%, transparent);
+}
+.bunring .bn-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  color: var(--bn-accent-deep);
+  background: linear-gradient(160deg, #fff, var(--bn-accent-soft));
+  border: 1px solid var(--bn-edge);
+  box-shadow: 0 2px 0 var(--bn-edge-strong);
+}
+@media (prefers-color-scheme: dark) {
+  .bunring .bn-tile {
+    color: var(--bn-accent);
+    background: var(--bn-accent-soft);
+  }
+}
+.bunring .bn-bar {
+  height: 9px;
+  border-radius: 999px;
+  background: var(--bn-track);
+  overflow: hidden;
+}
+.bunring .bn-bar-thin {
+  height: 5px;
+}
+.bunring .bn-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--bn-accent), color-mix(in srgb, var(--bn-accent) 70%, #fff));
+  transition: width 500ms cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+/* 머리띠의 우리 구. 알약 안에 고르기를 그대로 넣는다. */
+.bunring .bn-gu select {
+  appearance: none;
+  background: transparent;
+  font-weight: 600;
+  color: var(--ink);
+  padding-right: 14px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    right 4px center,
+    right 0 center;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+  outline: none;
+}
+.bunring .bn-gu:focus-within {
+  border-color: var(--bn-accent);
+}
+
+/* 판의 말풍선. 누른 조각 위로 톡 튀어나와 떠올랐다 사라진다(2.2초, BUBBLE_MS 와 같다). */
+.bunring .bn-bubble {
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 7px 13px 8px;
+  border-radius: 16px;
+  background: var(--bn-card);
+  border: 1.5px solid var(--bn-accent);
+  box-shadow: 0 3px 0 color-mix(in srgb, var(--bn-accent) 35%, transparent), var(--bn-lift-hi);
+  white-space: nowrap;
+  transform-origin: 50% 100%;
+  animation: bn-bubble 2.2s cubic-bezier(0.3, 1.5, 0.5, 1) both;
+}
+.bunring .bn-bubble::after {
+  content: "";
+  position: absolute;
+  left: clamp(18px, calc(50% + var(--tail, 0px)), calc(100% - 18px));
+  bottom: -7px;
+  width: 12px;
+  height: 12px;
+  background: var(--bn-card);
+  border-right: 1.5px solid var(--bn-accent);
+  border-bottom: 1.5px solid var(--bn-accent);
+  transform: translateX(-50%) rotate(45deg);
+}
+.bunring .bn-bubble b {
+  font-size: 15px;
+  color: var(--bn-accent-deep);
+  font-variant-numeric: tabular-nums;
+}
+.bunring .bn-bubble small {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+@media (prefers-color-scheme: dark) {
+  .bunring .bn-bubble b {
+    color: var(--bn-accent);
+  }
+}
+@keyframes bn-bubble {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -100%) translateY(6px) scale(0.4);
+  }
+  14% {
+    opacity: 1;
+    transform: translate(-50%, -100%) translateY(-10px) scale(1.08);
+  }
+  22% {
+    transform: translate(-50%, -100%) translateY(-10px) scale(1);
+  }
+  78% {
+    opacity: 1;
+    transform: translate(-50%, -100%) translateY(-22px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -100%) translateY(-34px) scale(0.9);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bunring .bn-bubble {
+    animation: bn-bubble-still 2.2s linear both;
+  }
+  @keyframes bn-bubble-still {
+    0%,
+    90% {
+      opacity: 1;
+      transform: translate(-50%, -100%) translateY(-10px);
+    }
+    100% {
+      opacity: 0;
+      transform: translate(-50%, -100%) translateY(-10px);
+    }
+  }
+}
+
+/* 사진 크게 보기. */
+.bunring .bn-zoom {
+  background: color-mix(in srgb, var(--bn-sky-2) 55%, rgba(10, 12, 40, 0.45));
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: bn-fade 160ms ease-out both;
+}
+.bunring .bn-zoom-card {
+  box-shadow: var(--bn-lift-hi);
+  animation: bn-pop 220ms cubic-bezier(0.3, 1.4, 0.5, 1) both;
+}
+@keyframes bn-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes bn-pop {
+  from {
+    transform: scale(0.85);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bunring .bn-zoom,
+  .bunring .bn-zoom-card {
+    animation: none;
+  }
+}
+
+.bunring .bn-fold > summary {
+  cursor: pointer;
+  list-style: none;
+}
+.bunring .bn-fold > summary::before {
+  content: "▸ ";
+}
+.bunring .bn-fold[open] > summary::before {
+  content: "▾ ";
+}
+
+/*
+  첫 화면의 판. 가운데 링이 카메라이고, 둘레 여백에 찍은 것이 만화 배지로 쌓인다. 여백이 곧 화면이다.
+  바닥은 아이소메트릭 격자, 링 아래에는 마름모 받침이 깔린다.
+*/
+.bunring-stage {
+  height: min(66vh, 600px);
+  min-height: 380px;
+  border-radius: 28px;
+  border: 1px solid var(--bn-edge);
+  background:
+    radial-gradient(ellipse 60% 50% at 50% 52%, var(--bn-glow), transparent 72%),
+    linear-gradient(180deg, var(--bn-sky-1), var(--bn-sky-2));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    var(--bn-lift-hi);
+}
+.bunring-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    repeating-linear-gradient(30deg, var(--bn-grid) 0 1px, transparent 1px 46px),
+    repeating-linear-gradient(150deg, var(--bn-grid) 0 1px, transparent 1px 46px);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 50%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 50%);
+}
+.bn-pad {
+  transform: translate(-50%, -50%) rotateX(62deg) rotateZ(45deg);
+  border-radius: 22%;
+  background: var(--bn-pad);
+  border: 2px dashed var(--bn-pad-edge);
+  box-shadow: 0 0 0 10px color-mix(in srgb, var(--bn-pad) 50%, transparent);
+}
+.ring-shot {
+  transition: transform 160ms cubic-bezier(0.2, 0.9, 0.2, 1);
+  -webkit-tap-highlight-color: transparent;
+  filter: drop-shadow(0 18px 14px rgba(50, 60, 150, 0.2)) drop-shadow(0 3px 3px rgba(50, 60, 150, 0.14));
+}
+.ring-shot:hover:not(:disabled) {
+  transform: translate(-50%, -50%) scale(1.04);
+}
+.ring-shot:active:not(:disabled) {
+  transform: translate(-50%, -50%) scale(0.94);
+}
+.ring-shot:focus-visible {
+  outline: 2px solid var(--bn-accent);
+  outline-offset: 4px;
+}
+.ring-float {
+  animation: ring-float 4.2s ease-in-out infinite;
+}
+@keyframes ring-float {
+  50% {
+    transform: translateY(-5px);
+  }
+}
+.ring-spin {
+  transform-box: view-box;
+  transform-origin: center;
+  animation: ring-spin 1.1s linear infinite;
+}
+@keyframes ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ring-shot,
+  .ring-spin,
+  .ring-float,
+  .bunring .bn-dot-live {
+    transition: none;
+    animation: none;
+  }
+}
+
+/*
+  사진일지(`/photolog`). 모델이 없는 도구라 흑백뿐이다. 무지개도 주황도 쓰지 않는다.
+  첫 화면은 무대 하나: 흰빛에서 옅은 회색으로 번지는 바탕 위에 겹 셋과 검정 사진기만 둔다.
+  테두리·격자·글은 빼고, 분링에서 두 겹 그림자만 빌렸다. 시선이 겹과 사진기에만 가게.
+*/
+.photolog {
+  --pl-sky-1: #ffffff;
+  --pl-sky-2: #e9e9ec;
+  --pl-glow: rgba(255, 255, 255, 0.9);
+  --pl-lift: 0 1px 2px rgba(12, 13, 16, 0.04), 0 18px 44px rgba(12, 13, 16, 0.07);
+}
+@media (prefers-color-scheme: dark) {
+  .photolog {
+    --pl-sky-1: #1d1d21;
+    --pl-sky-2: #0b0b0d;
+    --pl-glow: rgba(255, 255, 255, 0.06);
+    --pl-lift: 0 1px 2px rgba(0, 0, 0, 0.4), 0 18px 44px rgba(0, 0, 0, 0.45);
+  }
+}
+.pl-stage {
+  background:
+    radial-gradient(60% 55% at 50% 42%, var(--pl-glow), transparent 70%),
+    linear-gradient(165deg, var(--pl-sky-1) 0%, var(--pl-sky-2) 100%);
+  box-shadow: var(--pl-lift);
+}
+.pl-stage[data-over="1"] {
+  outline: 1.5px dashed var(--ink);
+  outline-offset: -8px;
+}
+
+/*
+  현장방(`/team/[방]`). 단톡방 꼴이고 색만 우리 것. 바탕은 회녹색, 내 말풍선은 안전조끼 연두.
+  빨강은 여기서도 위험도 하나뿐이다(게이지 · 수준 글자).
+*/
+.team-chat {
+  --chat-bg: #cdd6d0;
+  --chat-head: #c2ccc5;
+  --chat-other: #ffffff;
+  --chat-mine: #d6f06e;
+  --chat-mine-ink: #15180f;
+  --chat-ink: #15171a;
+  --chat-sub: #57615b;
+  --chat-pill: rgba(24, 34, 29, 0.24);
+  --chat-bar: #ffffff;
+  --chat-line: #dde2de;
+  --chat-press: #1b2420;
+}
+
+@media (prefers-color-scheme: dark) {
+  .team-chat {
+    --chat-bg: #151b18;
+    --chat-head: #1b221e;
+    --chat-other: #262e2a;
+    --chat-mine: #c6e05d;
+    --chat-mine-ink: #11140b;
+    --chat-ink: #eaeee8;
+    --chat-sub: #93a097;
+    --chat-pill: rgba(255, 255, 255, 0.12);
+    --chat-bar: #0f1311;
+    --chat-line: #29312d;
+    --chat-press: #c6e05d;
+  }
+}
+
+.team-mic-ring {
+  transition: transform 120ms ease-out;
 }

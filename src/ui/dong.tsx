@@ -30,12 +30,15 @@ export function DongPicker({
   value,
   onChange,
   disabled,
+  note,
 }: {
   /** 입력칸 바로 옆에 놓을 것. 같은 줄, 같은 모양의 작은 단추 하나를 둔다. */
   trailing?: React.ReactNode;
   value: string | null;
   onChange: (name: string | null, choice: DongChoice | null) => void;
   disabled?: boolean;
+  /** 고른 동 옆에 적는 말. 없으면 주소 대조 안내. 다른 일에 쓸 때 바꾼다. */
+  note?: (choice: DongChoice) => string;
 }) {
   const [dongs, setDongs] = useState<DongChoice[] | null>(null);
   const [typed, setTyped] = useState("");
@@ -137,7 +140,7 @@ export function DongPicker({
             setOpen(false);
           }
         }}
-        className="min-w-0 flex-1 rounded-md px-2 py-1 text-[12px] sm:max-w-56"
+        className="min-w-36 flex-1 rounded-md px-2 py-1 text-[12px] sm:max-w-56"
         style={{ background: "var(--wash)", border: "1px solid var(--line)", color: "var(--ink)" }}
       />
 
@@ -146,7 +149,7 @@ export function DongPicker({
       {chosen && !open && (
         <>
           <span className="text-[11px] text-[var(--muted)]">
-            도로 {chosen.roads}개 · 건물 {chosen.buildings.toLocaleString()}건으로 주소를 대조합니다.
+            {note ? note(chosen) : `도로 ${chosen.roads}개 · 건물 ${chosen.buildings.toLocaleString()}건으로 주소를 대조합니다.`}
           </span>
           <button
             type="button"

@@ -992,6 +992,184 @@ function described(index, signText = null) {
   check("「후」가 이미 있는 자리에는 다음 「후」를 안 붙인다", twoAfter.length === 2 && twoAfter[0].photos.join(",") === "0,1,2", twoAfter.map((g) => g.photos.join(",")).join(" / "));
 }
 
+// ── 뒤에 찍는 사람인데 앞이 비어 있는 주소판(09-27 실물 63장: 첫 자리와 두 시간 쉬고 온 첫 자리가 주소판을 먼저 찍었다)
+//     지어낸 하루는 뒤에 찍는 자리(전 후 주소판)를 넉넉히 넣어 그날 읽기가 「뒤」로 서게 한다. 실물도 9표 대 6표로 뒤였다.
+const P = (index, extra = {}) => judged(index, "none_of_these", { addressPlate: 0.97, stage: "not_applicable", stageProbabilities: { not_applicable: 0.98 }, ...extra });
+const B = (index, extra = {}) => judged(index, "waste_cleanup", { stage: "before", stageProbabilities: { before: 0.92 }, ...extra });
+const A = (index, extra = {}) => judged(index, "none_of_these", { sameLocation: 0.8, stage: "after", stageProbabilities: { before: 0.05, after: 0.9 }, ...extra });
+const shapeOf = (groups) => groups.map((g) => g.photos.join(",")).join(" / ");
+{
+  // 첫 장이 주소판 · 같은 분에 두 장 | 전(2분 뒤) 주소판 후(같은 분, 해당 없음) | 전 후 주소판 셋(걸어가는 간격)
+  const photos = [
+    described(0, "○○로1길 1"), described(1), described(2),
+    described(3), described(4, "○○로1길 5"), described(5),
+    described(6), described(7), described(8, "○○로1길 9"),
+    described(9), described(10), described(11, "○○로1길 13"),
+    described(12), described(13), described(14, "○○로1길 17"),
+  ];
+  const calls = [
+    P(0, { stageProbabilities: { not_applicable: 1 } }),
+    judged(1, "none_of_these", { sameLocation: 0.37, stage: "not_applicable", stageProbabilities: { before: 0, not_applicable: 0.83, after: 0.17 } }),
+    B(2, { sameLocation: 0.81 }),
+    B(3, { sameLocation: 0.24, stageProbabilities: { before: 0.94 } }),
+    P(4, { addressPlate: 0.96, stageProbabilities: { not_applicable: 0.94 } }),
+    // 치운 뒤 빈 길. 「후」가 아니라 「해당 없음」 0.59 로 나왔지만 「전」은 0.01 이다.
+    judged(5, "none_of_these", { sameLocation: 0.33, stage: "not_applicable", stageProbabilities: { before: 0.01, not_applicable: 0.59, after: 0.4 } }),
+    B(6), A(7), P(8),
+    B(9), A(10), P(11),
+    B(12), A(13), P(14),
+  ];
+  const groups = buildGroups(photos, calls, THRESHOLDS, clocks(
+    "06:27", "06:27", "06:27", "06:29", "06:30", "06:30", "06:46", "06:48", "06:48", "06:55", "06:56", "06:56", "07:03", "07:04", "07:04",
+  ));
+  const shape = shapeOf(groups);
+  check("첫 장 주소판은 그 자리의 앞이다(뒤에 찍는 사람이어도)", groups[0]?.photos.join(",") === "0,1,2", shape);
+  check("그 자리 주소는 첫 장 주소판", groups[0]?.address === "○○로1길 1", groups[0]?.address);
+  check("주소판 다음의 「해당 없음」(전 아님) 한 장은 그 자리에 남는다", groups[1]?.photos.join(",") === "3,4,5", shape);
+  check("나머지 자리는 그대로", groups.length === 5 && groups[2]?.photos.join(",") === "6,7,8" && groups[4]?.photos.join(",") === "12,13,14", shape);
+
+  // 걸어온 뒤(시각 경계) 첫 장이 주소판 · 같은 분에 전 두 장 · 5분 뒤 다음 자리 전 후 주소판 · 그 뒤 뒤에 찍는 자리 둘
+  const rested = buildGroups(
+    [
+      described(0), described(1), described(2, "○○로1길 1"), described(3), described(4), described(5), described(6), described(7, "○○로1길 5"),
+      described(8), described(9), described(10, "○○로1길 9"), described(11), described(12), described(13, "○○로1길 13"),
+    ],
+    [
+      B(0, { stageProbabilities: { before: 0.99 } }), B(1, { stageProbabilities: { before: 1 } }),
+      P(2, { stageProbabilities: { not_applicable: 0.95 } }), B(3, { stageProbabilities: { before: 0.98 } }), B(4, { stageProbabilities: { before: 0.86 } }),
+      B(5, { stageProbabilities: { before: 0.99 } }), A(6, { stageProbabilities: { before: 0.36, after: 0.62 } }), P(7, { stageProbabilities: { not_applicable: 1 } }),
+      B(8), A(9), P(10),
+      B(11), A(12), P(13),
+    ],
+    THRESHOLDS,
+    clocks("09:27", "09:27", "09:33", "09:33", "09:33", "09:38", "09:38", "09:38", "09:45", "09:46", "09:46", "09:52", "09:53", "09:53"),
+  );
+  const restedShape = shapeOf(rested);
+  check("걸어온 뒤 첫 장 주소판은 그 자리의 앞이다", rested[1]?.photos.join(",") === "2,3,4" && rested[1]?.address === "○○로1길 1", restedShape);
+  check("그 다음 자리는 제 주소판으로 끝난다", rested[2]?.photos.join(",") === "5,6,7" && rested[2]?.address === "○○로1길 5", restedShape);
+
+  // 앞이 비어 있어도 다음 장이 멀면(2분 넘게) 정말 주소판 한 장만 찍은 자리다.
+  const lone = buildGroups(
+    [described(0, "○○로1길 1"), described(1), described(2), described(3, "○○로1길 5"), described(4), described(5), described(6, "○○로1길 9")],
+    [P(0, { stageProbabilities: { not_applicable: 1 } }), B(1), A(2), P(3), B(4), A(5), P(6)],
+    THRESHOLDS,
+    clocks("09:00", "09:03", "09:04", "09:04", "09:10", "09:11", "09:11"),
+  );
+  check("다음 장이 멀면 주소판 혼자인 자리로 둔다", lone.length === 3 && lone[0].photos.join(",") === "0" && lone[1].photos.join(",") === "1,2,3", shapeOf(lone));
+}
+
+// ── 주소판 다음의 「후」를 남기면 그 자리는 거기서 닫힌다(09-27 실물: 안 닫으니 다음 자리 주소판과 시각 없는 두 장이 딸려 들어왔다)
+{
+  // 전(07:26) 주소판(07:27) 후(07:27, 해당 없음) · 그 뒤 옆 장 시각을 빌린 두 장(07:27) · 두 시간 뒤 뒤에 찍는 자리 셋
+  const photos = [
+    described(0), described(1, "○○로1길 1"), described(2), described(3), described(4),
+    described(5), described(6), described(7, "○○로1길 5"), described(8), described(9), described(10, "○○로1길 9"), described(11), described(12), described(13, "○○로1길 13"),
+  ];
+  const calls = [
+    B(0, { stageProbabilities: { before: 0.53, not_applicable: 0.46 } }),
+    P(1, { stageProbabilities: { not_applicable: 0.9 } }),
+    judged(2, "none_of_these", { sameLocation: 0.43, stage: "not_applicable", stageProbabilities: { before: 0, not_applicable: 0.89, after: 0.11 } }),
+    judged(3, "flood_season", { top: 0.63, sameLocation: 0.53, stage: "before", stageProbabilities: { before: 0.66 } }),
+    judged(4, "waste_cleanup", { top: 0.58, sameLocation: 0.64, stage: "after", stageProbabilities: { after: 0.89 } }),
+    B(5), A(6), P(7),
+    B(8), A(9), P(10),
+    B(11), A(12), P(13),
+  ];
+  const groups = buildGroups(photos, calls, THRESHOLDS, clocks(
+    "07:26", "07:27", "07:27", "07:27", "07:27", "09:27", "09:28", "09:28", "09:35", "09:36", "09:36", "09:42", "09:43", "09:43",
+  ));
+  const shape = shapeOf(groups);
+  check("남긴 「후」 뒤에서 자리가 닫힌다", groups[0]?.photos.join(",") === "0,1,2", shape);
+  check("그 뒤 두 장은 따로 선다", groups[1]?.photos.join(",") === "3,4", shape);
+
+  // 남긴 「후」 다음이 주소판이면 그 주소판은 다음 자리 것이다(같은 자리에 주소판 둘이 들지 않는다).
+  const nextPlate = buildGroups(
+    [
+      described(0), described(1), described(2, "○○로1길 1"), described(3), described(4), described(5, "○○로1길 5"),
+      described(6), described(7, "○○로1길 9"), described(8), described(9, "○○로1길 13"), described(10), described(11, "○○로1길 17"),
+    ],
+    [
+      B(0), A(1), P(2),
+      B(3), A(4), P(5),
+      B(6, { stageProbabilities: { before: 0.99 } }),
+      P(7, { stageProbabilities: { not_applicable: 0.69 } }),
+      judged(8, "none_of_these", { sameLocation: 0.36, stage: "after", stageProbabilities: { before: 0.09, after: 0.5, not_applicable: 0.41 } }),
+      // 글자가 읽힌 「전」 0.72. 문턱(0.8) 아래라 주소판으로 친다. 실물에서는 CCTV 안내판의 주소였다.
+      judged(9, "waste_cleanup", { addressPlate: 0.97, stage: "before", stageProbabilities: { before: 0.72 } }),
+      judged(10, "none_of_these", { stage: "after", stageProbabilities: { before: 0.29, after: 0.55 } }),
+      P(11, { stageProbabilities: { not_applicable: 1 } }),
+    ],
+    THRESHOLDS,
+    clocks("09:40", "09:41", "09:41", "09:48", "09:49", "09:49", "09:56", "09:57", "09:57", "09:58", "09:59", "09:59"),
+  );
+  const nextShape = shapeOf(nextPlate);
+  check("남긴 「후」 다음 주소판은 이 자리에 안 든다", nextPlate[2]?.photos.join(",") === "6,7,8" && nextPlate[2]?.address === "○○로1길 9", nextShape);
+
+  // 확인 사진(그늘막·배수구: 해당 없음이 분명하고 갈래가 문턱 위)은 주소판 뒤에 같은 분이어도 남기지 않는다.
+  // 앞 자리 하나(전·후·주소판, 뒤에 7분 벌어짐)가 「뒤에 찍는 사람」을 말해 준다. 주소판 앞뒤가 다 2분 안이면 표를 안 내기 때문이다.
+  const checkShot = buildGroups(
+    [described(0), described(1), described(2, "○○로1길 3"), described(3), described(4, "○○로1길 1"), described(5), described(6)],
+    [
+      B(0), A(1), P(2),
+      B(3, { stageProbabilities: { before: 0.9 } }),
+      P(4),
+      judged(5, "flood_season", { top: 0.9, sameLocation: 0.2, stage: "not_applicable", stageProbabilities: { before: 0, not_applicable: 0.95 } }),
+      B(6, { stageProbabilities: { before: 0.9 } }),
+    ],
+    THRESHOLDS,
+    clocks("09:05", "09:06", "09:06", "09:13", "09:13", "09:14", "09:20"),
+  );
+  check("확인 사진은 주소판 뒤에 남기지 않는다", shapeOf(checkShot) === "0,1,2 / 3,4 / 5 / 6", shapeOf(checkShot));
+
+  // 그늘막 말이 든 장(갈래가 「모르겠음」이어도)은 남기지 않는다.
+  const shadeShot = buildGroups(
+    [described(0), described(1), described(2, "○○로1길 3"), described(3), described(4, "○○로1길 1"), { ...described(5), caption: "A folded sunshade canopy over a crossing." }, described(6)],
+    [
+      B(0), A(1), P(2),
+      B(3, { stageProbabilities: { before: 0.9 } }),
+      P(4),
+      judged(5, "none_of_these", { sameLocation: 0.2, stage: "not_applicable", stageProbabilities: { before: 0, not_applicable: 0.9 } }),
+      B(6, { stageProbabilities: { before: 0.9 } }),
+    ],
+    THRESHOLDS,
+    clocks("09:05", "09:06", "09:06", "09:13", "09:13", "09:14", "09:20"),
+  );
+  check("그늘막 장은 주소판 뒤에 남기지 않는다", shapeOf(shadeShot) === "0,1,2 / 3,4 / 5 / 6", shapeOf(shadeShot));
+}
+
+// ── 주소판 앞뒤가 다 같은 자리 안이면 앞·뒤 표를 안 낸다(09-07 실물 31장: 「전 → 주소판 → 후」로 찍는 사람.
+//    주소판 앞 1분·뒤 0분이 자리마다 「앞」 표가 되어 주소판 앞에서 끊기고 「전」이 낱장이 됐다)
+{
+  const clock = (time) => stampFromClock("2026-09-07", time);
+  const plateAt = [false, false, true, false, true, false, false, true, false, false, false, true];
+  const stamps = ["10:24", "10:25", "10:25", "10:46", "10:48", "10:48", "11:04", "11:05", "11:05", "11:21", "11:22", "11:22"].map(clock);
+  check("1분 대 0분은 표가 아니다(2분 안)", wherePlate(plateAt, stamps, 2) === "trailing", wherePlate(plateAt, stamps, 2));
+  check("문턱 0이면 종전대로 1분 대 0분도 표다", wherePlate(plateAt, stamps, 0) === "leading", wherePlate(plateAt, stamps, 0));
+  const walked = [true, false, false, true, false, false, true, false, false];
+  const walkedStamps = ["09:00", "09:00", "09:01", "09:10", "09:10", "09:11", "09:20", "09:20", "09:21"].map(clock);
+  check("걸어간 자국(9분)이 든 표는 그대로 낸다", wherePlate(walked, walkedStamps, 2) === "leading", wherePlate(walked, walkedStamps, 2));
+
+  // 전 → 주소판 → 후 네 자리. 「뒤」로 읽어야 주소판 뒤의 「후」가 그 자리에 남는다.
+  const middle = buildGroups(
+    [
+      described(0), described(1), described(2, "○○로1길 15"),
+      described(3), described(4, "○○로2길 82"), described(5),
+      described(6), described(7, "○○로3길 2"), described(8),
+      described(9), described(10, "○○로4길 16"), described(11),
+    ],
+    [
+      B(0, { stageProbabilities: { before: 0.87 } }), A(1, { stageProbabilities: { before: 0.08, after: 0.92 } }), P(2),
+      B(3, { stageProbabilities: { before: 0.99 } }), P(4, { stageProbabilities: { not_applicable: 0.78 } }), A(5, { stageProbabilities: { before: 0, after: 0.76 } }),
+      B(6, { stageProbabilities: { before: 0.97 } }), P(7), judged(8, "none_of_these", { stage: "not_applicable", stageProbabilities: { before: 0.06, not_applicable: 0.93 } }),
+      B(9, { stageProbabilities: { before: 0.72 } }), P(10), A(11, { stageProbabilities: { before: 0, after: 0.79 } }),
+    ],
+    THRESHOLDS,
+    clocks("10:24", "10:25", "10:25", "10:46", "10:48", "10:48", "11:04", "11:05", "11:05", "11:44", "11:45", "11:45"),
+  );
+  check("전 → 주소판 → 후 로 찍는 사람은 자리마다 석 장", shapeOf(middle) === "0,1,2 / 3,4,5 / 6,7,8 / 9,10,11", shapeOf(middle));
+  check("주소는 제자리 주소판 것", middle[1]?.address === "○○로2길 82" && middle[3]?.address === "○○로4길 16", `${middle[1]?.address} / ${middle[3]?.address}`);
+}
+
 // ── 사진 칸의 주소판(09-26 실물: 벽의 작은 번호판을 읽어 온 「후」 사진이 빠져 후 칸이 비었다)
 {
   const { isPlateShot, isPlate } = await import("../src/core/group.ts");
@@ -1008,6 +1186,129 @@ function described(index, signText = null) {
   const group = { id: "g", photos: [0, 1, 2], address: "○○로 9-1", lane: "waste_cleanup", edited: true, time: "09:32" };
   const picks = pickPhotos([group], (i) => isPlateShot(byIdx.get(i), i === 0 || i === 1 ? "9-1" : "○○로 9-1", THRESHOLDS), (i, stage) => (byIdx.get(i)?.stage === stage ? byIdx.get(i).stageProbabilities[stage] ?? 0 : 0));
   check("실물: 옮겨 넣은 전 사진이 전 칸, 깨끗한 출입구가 후 칸", picks[0]?.before === 0 && picks[0]?.after === 1, JSON.stringify(picks[0]));
+}
+
+// ── 주소판 뒤의 확인 사진이 이 자리와 같은 갈래면 그 자리의 것이다(09-15 실물: CCTV 안내판 장이 낱장이 됐다)
+{
+  // 전 후 주소판 두 자리(뒤에 찍는 사람) · 전(09:40) 주소판(09:41) 안내판 장(09:41, 해당 없음 0.89 · 순찰사항 0.85) · 30분 뒤 다음 자리
+  const photos = [
+    described(0), described(1), described(2, "○○로1길 1"), described(3), described(4), described(5, "○○로1길 5"),
+    described(6), described(7, "○○로1길 9"), described(8),
+    described(9), described(10), described(11, "○○로1길 13"),
+  ];
+  const sameLaneCheck = judged(8, "waste_cleanup", { top: 0.85, sameLocation: 0.27, stage: "not_applicable", stageProbabilities: { before: 0.07, not_applicable: 0.89, after: 0.04 } });
+  const otherLaneCheck = judged(8, "flood_season", { top: 0.85, sameLocation: 0.27, stage: "not_applicable", stageProbabilities: { before: 0.07, not_applicable: 0.89, after: 0.04 } });
+  const times = clocks("09:00", "09:01", "09:01", "09:10", "09:11", "09:11", "09:40", "09:41", "09:41", "10:12", "10:12", "10:13");
+  const head = [B(0), A(1), P(2), B(3), A(4), P(5), B(6, { stageProbabilities: { before: 1 } }), P(7, { stageProbabilities: { not_applicable: 0.88 } })];
+  const tail = [B(9), B(10), P(11)];
+  const same = buildGroups(photos, [...head, sameLaneCheck, ...tail], THRESHOLDS, times);
+  const other = buildGroups(photos, [...head, otherLaneCheck, ...tail], THRESHOLDS, times);
+  check("주소판 뒤 같은 갈래의 확인 사진은 그 자리에 남는다", shapeOf(same) === "0,1,2 / 3,4,5 / 6,7,8 / 9,10,11", shapeOf(same));
+  check("다른 갈래의 확인 사진은 종전대로 따로 선다", shapeOf(other) === "0,1,2 / 3,4,5 / 6,7 / 8 / 9,10,11", shapeOf(other));
+}
+
+// ── 치우는 데 오래 걸린 자리. 시각이 벌어져도 「앞과 같은 자리」가 확실한 「후」는 그 자리 것이다(09-15 실물: 12분)
+{
+  // 전 후 주소판(10:16~10:17) · 전(10:23, 해당 없음 0.58) · 후(10:35, 같은 자리 0.89) 주소판(10:35) · 다음 자리
+  const photos = [
+    described(0), described(1), described(2, "○○로1길 1"),
+    described(3), described(4), described(5, "○○로1길 5"),
+    described(6), described(7), described(8, "○○로1길 9"),
+  ];
+  const lone = judged(3, "none_of_these", { sameLocation: 0.31, stage: "not_applicable", stageProbabilities: { before: 0.12, not_applicable: 0.58, after: 0.3 } });
+  const calls = (sameLocation) => [B(0), A(1), P(2), lone, A(4, { sameLocation, stageProbabilities: { after: 0.93 } }), P(5), B(6), A(7), P(8)];
+  const times = clocks("10:16", "10:17", "10:17", "10:23", "10:35", "10:35", "10:40", "10:43", "10:44");
+  const sureSame = buildGroups(photos, calls(0.89), THRESHOLDS, times);
+  const unsure = buildGroups(photos, calls(0.6), THRESHOLDS, times);
+  const tooLong = buildGroups(photos, calls(0.89), THRESHOLDS, clocks("10:16", "10:17", "10:17", "10:23", "10:50", "10:50", "10:55", "10:58", "10:59"));
+  check("같은 자리가 확실한 「후」는 12분이 벌어져도 앞 「전」과 한 자리", shapeOf(sureSame) === "0,1,2 / 3,4,5 / 6,7,8", shapeOf(sureSame));
+  check("확률이 그만큼 높지 않으면 종전대로 시각이 끊는다", shapeOf(unsure) === "0,1,2 / 3 / 4,5 / 6,7,8", shapeOf(unsure));
+  check("치우는 시간(20분)을 넘으면 거두지 않는다", shapeOf(tooLong) === "0,1,2 / 3 / 4,5 / 6,7,8", shapeOf(tooLong));
+}
+
+// ── 주소판 없이 표지 사진으로 연 자리(09-28 실물 22장, 앞에 찍는 사람: 주소판 자리를 끝내고 1분 만에 건물 표지판·전·전·후.
+//    시각도 주소판도 못 끊어 일곱 장이 한 덩이가 됐고, 리듬 3장으로 자르니 마지막 「후」가 낱장이 됐다)
+{
+  const sure = (stage, p) => ({
+    stage,
+    stageProbabilities: { before: stage === "before" ? p : 0, after: stage === "after" ? p : 0, not_applicable: stage === "not_applicable" ? p : 0 },
+  });
+  const plate = (index, sign) => [described(index, sign), judged(index, "none_of_these", { addressPlate: 0.96, ...sure("not_applicable", 0.95) })];
+  const shot = (index, lane, stage, p, sameLocation = null) => [described(index), judged(index, lane, { sameLocation, ...sure(stage, p) })];
+  const build = (afterSure) => {
+    const pairs = [
+      plate(0, "○○로1길 5"),
+      shot(1, "waste_cleanup", "before", 0.88),
+      shot(2, "waste_cleanup", "after", afterSure),
+      shot(3, "none_of_these", "not_applicable", 0.9, 0.13),
+      shot(4, "waste_cleanup", "before", 0.53, 0.68),
+      shot(5, "waste_cleanup", "before", 0.93, 0.31),
+      shot(6, "none_of_these", "after", 0.98, 0.66),
+      plate(7, "○○로2길 7"),
+      shot(8, "waste_cleanup", "before", 0.9),
+      shot(9, "waste_cleanup", "after", 0.9),
+      plate(10, "○○로3길 9"),
+      shot(11, "waste_cleanup", "before", 0.9),
+      shot(12, "waste_cleanup", "after", 0.9),
+    ];
+    const stamps = clocks("10:00", "10:01", "10:04", "10:05", "10:05", "10:08", "10:10", "10:11", "10:11", "10:13", "10:15", "10:15", "10:17");
+    return buildGroups(pairs.map((p) => p[0]), pairs.map((p) => p[1]), THRESHOLDS, stamps);
+  };
+  const shapeOf = (groups) => groups.map((g) => g.photos.join(",")).join(" / ");
+  const opened = build(0.97);
+  check("분명한 「후」 뒤의 표지 사진에서 다음 자리가 열린다", shapeOf(opened) === "0,1,2 / 3,4,5,6 / 7,8,9 / 10,11,12", shapeOf(opened));
+  check("열린 자리는 주소가 없고 주소판 자리는 제 주소를 지킨다", opened[1]?.address === "" && opened[0]?.address === "○○로1길 5" && opened[2]?.address === "○○로2길 7", opened.map((g) => g.address).join(" | "));
+  const unsure = build(0.6);
+  check("분명한 「후」가 없으면 종전대로 리듬으로 자른다", shapeOf(unsure) === "0,1,2 / 3,4,5 / 6 / 7,8,9 / 10,11,12", shapeOf(unsure));
+}
+
+// ── 전·후 사진 고르기는 찍은 차례가 먼저다(09-28 실물 22장: 쓸고 있는 장이 「후」 0.81, 뒤의 빈 골목이 「후」 0.73 로 나와
+//    확률 높은 장을 후로 삼으니 전·후가 뒤집혔다. 네 자리 가운데 넷이 그랬다)
+{
+  const { pickPhotos } = await import("../src/core/ilji-slots.ts");
+  const score = (table) => (i, stage) => table[i]?.[stage] ?? 0;
+  const group = (photos) => [{ id: "g", photos, address: "○○로 1", lane: "waste_cleanup", edited: false, time: "" }];
+  const noPlate = () => false;
+  const bothAfter = pickPhotos(group([6, 7]), noPlate, score({ 6: { after: 0.81 }, 7: { after: 0.73 } }));
+  check("둘 다 「후」로 보이면 앞 장이 전, 뒷 장이 후", bothAfter[0]?.before === 6 && bothAfter[0]?.after === 7, JSON.stringify(bothAfter[0]));
+  const bothBefore = pickPhotos(group([16, 17]), noPlate, score({ 16: { before: 0.75 }, 17: { before: 0.81 } }));
+  check("둘 다 「전」으로 보여도 앞 장이 전, 뒷 장이 후", bothBefore[0]?.before === 16 && bothBefore[0]?.after === 17, JSON.stringify(bothBefore[0]));
+  const three = pickPhotos(group([12, 13, 14]), noPlate, score({ 12: { before: 0.81 }, 13: { before: 0.9 }, 14: { after: 0.97 } }));
+  check("전이 둘이면 첫 장이 전, 후는 마지막 「후」", three[0]?.before === 12 && three[0]?.after === 14, JSON.stringify(three[0]));
+  const plain = pickPhotos(group([9, 10]), noPlate, score({ 9: { before: 0.92 }, 10: { after: 0.7 } }));
+  check("전·후가 차례대로면 그대로", plain[0]?.before === 9 && plain[0]?.after === 10, JSON.stringify(plain[0]));
+  const reversedSure = pickPhotos(group([1, 2]), noPlate, score({ 1: { after: 0.95 }, 2: { before: 0.9 } }));
+  check("판정이 차례를 거슬러도 둘 다 분명하면 판정대로(폰 차례가 거꾸로일 때)", reversedSure[0]?.before === 2 && reversedSure[0]?.after === 1, JSON.stringify(reversedSure[0]));
+  const reversedUnsure = pickPhotos(group([1, 2]), noPlate, score({ 1: { after: 0.6 }, 2: { before: 0.7 } }));
+  check("거스르는 판정이 애매하면 차례가 이긴다", reversedUnsure[0]?.before === 1 && reversedUnsure[0]?.after === 2, JSON.stringify(reversedUnsure[0]));
+  // 직접 적는 길: 판정이 없어 주소판을 못 가린다. 전·후·주소판 석 장이면 마지막 장을 빼고 전·후를 짝짓는다.
+  const none = () => 0;
+  const manualThree = pickPhotos(group([0, 1, 2]), noPlate, none, true);
+  check("판정이 없는 석 장 자리는 마지막 장(주소판)을 후 칸에 넣지 않는다", manualThree[0]?.before === 0 && manualThree[0]?.after === 1, JSON.stringify(manualThree[0]));
+  const manualTwo = pickPhotos(group([3, 4]), noPlate, none, true);
+  check("판정이 없는 두 장 자리는 그대로 전·후다", manualTwo[0]?.before === 3 && manualTwo[0]?.after === 4, JSON.stringify(manualTwo[0]));
+  const autoThree = pickPhotos(group([0, 1, 2]), noPlate, none);
+  check("판정이 있는 길은 종전대로 마지막 장이 후다", autoThree[0]?.before === 0 && autoThree[0]?.after === 2, JSON.stringify(autoThree[0]));
+
+  // 10-03 실물: 전 사진(전 0.71)에서 길 표지를 읽어 주소판이 되고, 진짜 주소판과 함께 둘이 빠져 전 칸이 비었다.
+  const platesAt = (set) => (i) => set.includes(i);
+  const twoPlates = pickPhotos(group([12, 13, 14]), platesAt([12, 14]), score({ 12: { before: 0.71 }, 13: { after: 0.98 } }));
+  check("주소판이 둘이면 전으로 기운 장을 전 칸에 되돌린다", twoPlates[0]?.before === 12 && twoPlates[0]?.after === 13, JSON.stringify(twoPlates[0]));
+  const onePlate = pickPhotos(group([12, 13]), platesAt([12]), score({ 12: { before: 0.71 }, 13: { after: 0.98 } }));
+  check("주소판이 하나뿐이면 되돌리지 않는다", onePlate[0]?.before === null && onePlate[0]?.after === 13, JSON.stringify(onePlate[0]));
+  const bothLean = pickPhotos(group([1, 2, 3]), platesAt([1, 3]), score({ 1: { before: 0.6 }, 2: { after: 0.9 }, 3: { after: 0.3 } }));
+  check("주소판이 전부 기울었어도 한 장은 주소판으로 남긴다", bothLean[0]?.before === 1 && bothLean[0]?.after === 2, JSON.stringify(bothLean[0]));
+
+  // 사람이 장마다 정한 쓰임이 판정보다 먼저다.
+  const withRoles = (photos, roles) => [{ ...group(photos)[0], roles }];
+  const forcedBefore = pickPhotos(withRoles([12, 13], { 12: "before" }), platesAt([12]), score({ 13: { after: 0.98 } }));
+  check("사람이 전으로 정한 장은 주소판이어도 전 칸에 든다", forcedBefore[0]?.before === 12 && forcedBefore[0]?.after === 13, JSON.stringify(forcedBefore[0]));
+  const swapped = pickPhotos(withRoles([1, 2], { 1: "after", 2: "before" }), noPlate, score({ 1: { before: 0.9 }, 2: { after: 0.9 } }));
+  check("사람이 전·후를 뒤바꿔 정하면 그대로 따른다", swapped[0]?.before === 2 && swapped[0]?.after === 1, JSON.stringify(swapped[0]));
+  const skipped = pickPhotos(withRoles([1, 2, 3], { 3: "skip" }), noPlate, score({ 1: { before: 0.9 }, 3: { after: 0.9 } }));
+  check("사람이 뺀 장은 고르지 않는다", skipped[0]?.before === 1 && skipped[0]?.after === 2, JSON.stringify(skipped[0]));
+  const stale = pickPhotos(withRoles([1, 2], { 9: "before" }), noPlate, score({ 1: { before: 0.9 }, 2: { after: 0.9 } }));
+  check("옮겨 가고 없는 장의 쓰임은 무시한다", stale[0]?.before === 1 && stale[0]?.after === 2, JSON.stringify(stale[0]));
 }
 
 if (problems.length > 0) {

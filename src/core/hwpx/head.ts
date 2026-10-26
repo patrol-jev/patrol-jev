@@ -21,6 +21,14 @@ export const CHAR = {
   note: 8, // ※ 안내 9pt 회색
   big: 9, // 개소 수 같은 큰 숫자 14pt 굵게
   strip: 10, // 맨 위 띠 9pt 회색
+  small: 11, // 공문 아래 기관 정보 10pt
+  tight: 12, // 1쪽 점검표의 표 안 9pt
+  tightBold: 13, // 1쪽 점검표의 표 라벨 9pt 굵게
+  sheetTitle: 14, // 또렷한 1쪽 서식의 제목 18pt 고딕 굵게, 자간 넓게
+  sheetBand: 15, // 또렷한 서식의 구역 띠 11pt 고딕 굵게 남색
+  sheetLabel: 16, // 또렷한 서식의 라벨 10pt 고딕 굵게
+  sheetText: 17, // 또렷한 서식의 값 · 문장 10pt 바탕
+  sheetStrong: 18, // 또렷한 서식의 점수 같은 값 10.5pt 고딕 굵게
 } as const;
 
 /** 문단 모양 번호. */
@@ -29,6 +37,10 @@ export const PARA = {
   center: 1, // 가운데, 140%
   cell: 2, // 표 안 본문, 왼쪽 여백 100, 150%
   right: 3, // 오른쪽 맞춤
+  tight: 4, // 표 안 본문, 왼쪽 여백 100, 130%
+  tightCenter: 5, // 표 안 가운데, 130%
+  sheet: 6, // 또렷한 서식의 표 안 왼쪽, 140%(셀 여백이 띄운다)
+  sheetCenter: 7, // 또렷한 서식의 표 안 가운데, 140%
 } as const;
 
 /** 고정 테두리 번호. 1부터다(한글이 그렇게 저장한다). 나머지는 `Fills` 가 3부터 이어 붙인다. */
@@ -40,9 +52,9 @@ const FILL_DYNAMIC_FROM = 3;
 
 export type Edge = "left" | "right" | "top" | "bottom";
 
-/** 테두리 한 벌. 선 종류 · 채움색 · 굵게 그을 가장자리. */
+/** 테두리 한 벌. 선 종류 · 채움색 · 굵게 그을 가장자리. `firm` 은 안쪽 선을 한 단 굵게(또렷한 서식). */
 export interface FillSpec {
-  border: "none" | "thin";
+  border: "none" | "thin" | "firm";
   color?: string;
   thick?: Edge[];
 }
@@ -66,6 +78,12 @@ export class Fills {
   imageId(i: number): number {
     return FILL_DYNAMIC_FROM + this.specs.length + i;
   }
+
+  /** i 번째 사진 테두리의 선. 안 정하면 가는 선 네 변. */
+  readonly imageFrames: Array<Omit<FillSpec, "color"> | undefined> = [];
+  frameImage(i: number, frame: Omit<FillSpec, "color">): void {
+    this.imageFrames[i] = frame;
+  }
 }
 
 /** 옅은 파랑. 구역 머리글 칸의 색. */
@@ -75,7 +93,7 @@ export const LABEL_FILL = "#F2F2F2";
 const SECTION_INK = "#1F3864";
 
 const FONTS = ["함초롬돋움", "맑은 고딕", "HY헤드라인M", "휴먼명조", "함초롬바탕"] as const;
-const FONT = { gothic: 1, headline: 2, myeongjo: 3 } as const;
+const FONT = { gothic: 1, headline: 2, myeongjo: 3, batang: 4 } as const;
 
 const LANGS = ["HANGUL", "LATIN", "HANJA", "JAPANESE", "OTHER", "SYMBOL", "USER"] as const;
 
@@ -104,19 +122,22 @@ function fontfaces(): string {
 const NOTE_INK = "#595959";
 
 const THIN = "0.12 mm";
+const FIRM = "0.2 mm";
+/** 또렷한 서식의 바깥 틀. 안쪽 선보다 한 단만 굵게(0.5mm 는 너무 짙다). */
+const FIRM_EDGE = "0.3 mm";
 const THICK = "0.5 mm";
 
-function border(type: "NONE" | "SOLID", thick: Edge[] = []): string {
+function border(type: "NONE" | "SOLID", thick: Edge[] = [], inner = THIN, edge = THICK): string {
   return (["left", "right", "top", "bottom"] as Edge[])
     .map((side) =>
-      tag(`hh:${side}Border`, { type, width: type === "NONE" ? "0.1 mm" : thick.includes(side) ? THICK : THIN, color: "#000000" }),
+      tag(`hh:${side}Border`, { type, width: type === "NONE" ? "0.1 mm" : thick.includes(side) ? edge : inner, color: "#000000" }),
     )
     .join("");
 }
 
 /** 테두리 하나. `fill` 은 채움 XML(색 또는 그림) 또는 빈 문자열. */
-function borderFill(id: number, kind: "none" | "thin", fill = "", thick: Edge[] = []): string {
-  const lines = kind === "none" ? border("NONE") : border("SOLID", thick);
+function borderFill(id: number, kind: FillSpec["border"], fill = "", thick: Edge[] = []): string {
+  const lines = kind === "none" ? border("NONE") : kind === "firm" ? border("SOLID", thick, FIRM, FIRM_EDGE) : border("SOLID", thick);
   return tag(
     "hh:borderFill",
     { id, threeD: 0, shadow: 0, centerLine: "NONE", breakCellSeparateLine: 0 },
@@ -141,7 +162,7 @@ function imageFill(binaryId: string): string {
   );
 }
 
-function charPr(id: number, height: number, font: number, options: { bold?: boolean; color?: string } = {}): string {
+function charPr(id: number, height: number, font: number, options: { bold?: boolean; color?: string; spacing?: number } = {}): string {
   const seven = (value: number | string) =>
     Object.fromEntries(["hangul", "latin", "hanja", "japanese", "other", "symbol", "user"].map((k) => [k, value]));
   return tag(
@@ -158,7 +179,7 @@ function charPr(id: number, height: number, font: number, options: { bold?: bool
     },
     tag("hh:fontRef", seven(font)) +
       tag("hh:ratio", seven(100)) +
-      tag("hh:spacing", seven(0)) +
+      tag("hh:spacing", seven(options.spacing ?? 0)) +
       tag("hh:relSz", seven(100)) +
       tag("hh:offset", seven(0)) +
       (options.bold ? "<hh:bold/>" : "") +
@@ -214,7 +235,7 @@ export function buildHeader(fills: Fills, imageIds: string[]): string {
     ...fills.specs.map((spec, i) =>
       borderFill(FILL_DYNAMIC_FROM + i, spec.border, spec.color ? colorFill(spec.color) : "", spec.thick ?? []),
     ),
-    ...imageIds.map((id, i) => borderFill(fills.imageId(i), "thin", imageFill(id))),
+    ...imageIds.map((id, i) => borderFill(fills.imageId(i), fills.imageFrames[i]?.border ?? "thin", imageFill(id), fills.imageFrames[i]?.thick ?? [])),
   ];
   const chars = [
     charPr(CHAR.body, 1200, FONT.gothic),
@@ -228,12 +249,24 @@ export function buildHeader(fills: Fills, imageIds: string[]): string {
     charPr(CHAR.note, 900, FONT.gothic, { color: NOTE_INK }),
     charPr(CHAR.big, 1400, FONT.gothic, { bold: true }),
     charPr(CHAR.strip, 900, FONT.gothic, { color: NOTE_INK }),
+    charPr(CHAR.small, 1000, FONT.gothic),
+    charPr(CHAR.tight, 900, FONT.gothic),
+    charPr(CHAR.tightBold, 900, FONT.gothic, { bold: true }),
+    charPr(CHAR.sheetTitle, 1800, FONT.gothic, { bold: true, spacing: 8 }),
+    charPr(CHAR.sheetBand, 1100, FONT.gothic, { bold: true, color: SECTION_INK }),
+    charPr(CHAR.sheetLabel, 1000, FONT.gothic, { bold: true }),
+    charPr(CHAR.sheetText, 1000, FONT.batang),
+    charPr(CHAR.sheetStrong, 1050, FONT.gothic, { bold: true }),
   ];
   const paras = [
     paraPr(PARA.left, "JUSTIFY", 160),
     paraPr(PARA.center, "CENTER", 140),
     paraPr(PARA.cell, "LEFT", 150, 100),
     paraPr(PARA.right, "RIGHT", 140),
+    paraPr(PARA.tight, "LEFT", 130, 100),
+    paraPr(PARA.tightCenter, "CENTER", 130),
+    paraPr(PARA.sheet, "LEFT", 140),
+    paraPr(PARA.sheetCenter, "CENTER", 140),
   ];
 
   return (

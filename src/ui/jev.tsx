@@ -132,7 +132,7 @@ export function NoulRow({
       <span className="shrink-0 text-[11px] text-[var(--muted)]">{label}</span>
 
       <div
-        className="relative ml-auto h-1.5 w-24 shrink-0 overflow-hidden rounded-full"
+        className="relative ml-auto h-1.5 w-24 min-w-6 overflow-hidden rounded-full"
         style={{ background: "var(--wash)" }}
         aria-hidden
       >

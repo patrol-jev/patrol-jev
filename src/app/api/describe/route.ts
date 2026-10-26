@@ -1,4 +1,4 @@
-import { loadConfig, readKey } from "@/core/config";
+import { loadConfig, readEyeKeys } from "@/core/config";
 import { describePhotos, type PhotoInput } from "@/core/describe";
 import { loadDong } from "@/core/road-index";
 import { hasPass, takeQuota, whoFrom } from "@/core/demo-limit";
@@ -11,10 +11,11 @@ import { explainError } from "@/core/why";
  * 한 장이 끝날 때마다 화면이 바로 차오르게 하려고.
  */
 export async function POST(request: Request) {
-  const apiKey = readKey("OPENAI_API_KEY");
-  if (!apiKey) {
+  // 눈은 둘(Claude · OpenAI). 키가 있는 쪽이 읽고, 둘 다 있으면 설정이 먼저를 정한다(src/core/eyes.ts).
+  const keys = readEyeKeys();
+  if (!keys.claude && !keys.openai) {
     return Response.json(
-      { error: "OPENAI_API_KEY 가 없습니다. .env.local 에 넣고 다시 띄워 주세요." },
+      { error: "사진을 읽을 키가 없습니다. ANTHROPIC_API_KEY 또는 OPENAI_API_KEY 를 .env.local 에 넣고 다시 띄워 주세요." },
       { status: 503 },
     );
   }
@@ -22,7 +23,9 @@ export async function POST(request: Request) {
   let photos: PhotoInput[];
   let dong: string | null = null;
   try {
-    ({ photos, dong = null } = (await request.json()) as { photos: PhotoInput[]; dong?: string | null });
+    const body = (await request.json()) as { photos: PhotoInput[]; dong?: string | null };
+    photos = body.photos;
+    dong = body.dong ?? null;
   } catch {
     return Response.json({ error: "요청을 읽지 못했습니다." }, { status: 400 });
   }
@@ -45,7 +48,7 @@ export async function POST(request: Request) {
 
   try {
     // 담당자가 고른 동의 도로명 색인. 없으면 읽은 주소를 그대로 쓴다.
-    const described = await describePhotos(photos, loadConfig(), apiKey, loadDong(dong));
+    const described = await describePhotos(photos, loadConfig(), keys, loadDong(dong));
     return Response.json({ described });
   } catch (error) {
     // 「fetch failed」 같은 원문 대신 까닭과 할 일을 적는다. 담당자가 당황하지 않게.

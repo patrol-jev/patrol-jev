@@ -25,6 +25,9 @@ export interface Described {
   ms: number;
   inputTokens: number;
   outputTokens: number;
+  /** 어느 눈이 읽었나. 서버가 답한 모델 이름. 이 칸이 생기기 전 기록에는 없다. */
+  eye?: "claude" | "openai";
+  model?: string;
 }
 
 /** Jev 가 한 장에 내린 판정. 고른 값만이 아니라 **분포 전체**를 들고 다닌다. */
@@ -80,6 +83,9 @@ export interface FirstPass {
   decide(items: FirstPassInput[]): Promise<Judged[]>;
 }
 
+/** 사람이 한 장에 정해 준 쓰임. 전 칸에 · 후 칸에 · 싣지 않음(주소판 등). */
+export type PhotoRole = "before" | "after" | "skip";
+
 /** 사람이 고친 것까지 반영된, 한 자리에 모인 사진 묶음. */
 export interface Group {
   id: string;
@@ -100,10 +106,20 @@ export interface Group {
   /** 찍힌 시각 중 가장 이른 것 (HH:MM). 없으면 빈 문자열. */
   time: string;
   /**
+   * 사람이 장마다 정해 준 쓰임(사진 index → 쓰임). 일지와 보고서의 사진 칸이 판정보다 이것을 먼저 따른다.
+   * 작업 사진 구석의 길 표지를 읽어 그 장이 주소판으로 빠질 때 사람이 되돌리는 자리다. 안 정한 장은 없다.
+   */
+  roles?: Record<number, PhotoRole>;
+  /**
    * 계절특수 자리 가운데 그늘막인 것. 캡션에 그늘막이 있으면 코드가 켠다(`isShadeSpot`).
    * 일지 문장이 배수구 말 대신 점검 말을 쓴다. 갈래는 그대로 계절특수다.
    */
   shade?: boolean;
+  /**
+   * 주소를 사진의 찍힌 자리(GPS)로 채웠으면 그 출입구까지 잰 거리(m). 주소판을 읽었거나
+   * 사람이 쳤으면 없다. 화면이 회색으로 「위치 · 12m」 라고 적는다.
+   */
+  gpsMeters?: number;
 }
 
 /** 익명 사용 로그 한 줄. 사진도, 주소도, 사람도 담기지 않는다. */
@@ -128,4 +144,12 @@ export interface UsageRecord {
   copied: boolean;
   /** 첫 실행 때 한 번 묻는 「전에는 한 장 쓰는 데 얼마나 걸렸나」(분). 안 답하면 null. */
   baselineMinutes: number | null;
+  /**
+   * 지난번 사람이 정해 준 갈래를 코드가 그대로 얹은 자리 수. 그 자리는 모델 판정을 덮었다.
+   * 회차가 쌓일수록 이 수가 오르고 고친 횟수가 내려가면, 사람의 판단이 규칙으로 남고 있다는 뜻이다.
+   * 이 칸이 생기기 전 기록에는 없다.
+   */
+  learnedLanes?: number;
+  /** 읽은 주소판을 그 동 도로명 색인과 대조해 맞은 장 수. 모델이 아니라 코드가 확정한 주소다. 이 칸이 생기기 전 기록에는 없다. */
+  roadMatched?: number;
 }

@@ -29,6 +29,7 @@ export interface PatrolConfig {
    * addressPlate = 이 이상일 때만 읽은 글자를 주소로 쓴다.
    * sameMinutes = 앞 장과 이 분 안에 찍혔으면 확률을 보지 않고 같은 자리로 잇는다(0 이면 안 씀).
    * splitMinutes = 이 분 넘게 벌어지면 무조건 다른 자리. 주소판보다 세다.
+   * gpsMeters = 사진 GPS 로 주소를 채울 때 허용하는 거리(m). 0 이면 안 씀.
    */
   thresholds: Thresholds;
   vision: {
@@ -53,6 +54,13 @@ export interface PatrolConfig {
      * 모델마다 받는 값이 다르다("minimal" 을 거부하는 모델이 있다). 틀리면 400 이 온다.
      */
     reasoningEffort?: "none" | "low" | "medium" | "high";
+    /**
+     * 눈이 둘일 때 누가 먼저 읽나(`src/core/eyes.ts`). 키가 있는 눈만 센다.
+     * 먼저인 눈이 키 · 잔액 문제로 거절하면 그 장부터 다른 눈이 읽고, 그 눈은 10분 쉰다.
+     */
+    first: "claude" | "openai";
+    /** Claude 로 읽을 때의 모델과 생각 깊이. 옮겨 적는 일이라 낮게 둔다. 토큰 · 긴 변 · 동시 수는 위의 값을 같이 쓴다. */
+    claude: { model: string; effort: "low" | "medium" | "high" };
   };
   firstPass: {
     /** 끄면 1차 판단 없이 전부 「모르겠음」으로 두고 사람이 정한다. */
@@ -84,7 +92,7 @@ export const DEFAULT_CONFIG: PatrolConfig = {
   threads: "",
   roads: [],
   seasonalSpots: [],
-  thresholds: { lane: 0.8, sameLocation: 0.5, addressPlate: 0.7, sameMinutes: 2, splitMinutes: 5, workShot: 0.8 },
+  thresholds: { lane: 0.8, sameLocation: 0.5, addressPlate: 0.7, sameMinutes: 2, splitMinutes: 5, workShot: 0.8, gpsMeters: 40 },
   vision: {
     // gpt-6-luna 도 통하지만 한 장마다 생각을 두 배로 해서 느리다(실물 30장 58초 대 26초).
     // 읽은 주소판 글자는 같았다. 옮겨 적는 일에는 이쪽이 맞다.
@@ -94,6 +102,8 @@ export const DEFAULT_CONFIG: PatrolConfig = {
     maxEdge: 1024,
     concurrency: 6,
     reasoningEffort: "none",
+    first: "claude",
+    claude: { model: "claude-opus-5-5", effort: "low" },
   },
   firstPass: { enabled: true, model: "jev-latest", concurrency: 8 },
   manual: { groupSize: 3 },
@@ -122,7 +132,7 @@ export function loadConfig(): PatrolConfig {
       ...DEFAULT_CONFIG,
       ...parsed,
       thresholds: { ...DEFAULT_CONFIG.thresholds, ...parsed.thresholds },
-      vision: { ...DEFAULT_CONFIG.vision, ...parsed.vision },
+      vision: { ...DEFAULT_CONFIG.vision, ...parsed.vision, claude: { ...DEFAULT_CONFIG.vision.claude, ...parsed.vision?.claude } },
       firstPass: { ...DEFAULT_CONFIG.firstPass, ...parsed.firstPass },
       manual: { ...DEFAULT_CONFIG.manual, ...parsed.manual },
       log: { ...DEFAULT_CONFIG.log, ...parsed.log },
@@ -143,7 +153,7 @@ export function loadConfig(): PatrolConfig {
  * 돌면 비용이 섞여서 「이 도구가 얼마 썼나」를 나중에 못 가린다. 그래서 **이 레포 이름이 붙은
  * 쪽을 먼저 본다.** 그런 게 없으면 그때 원래 이름을 쓴다. 새로 받은 사람에게는 이름 하나뿐이다.
  */
-export function readKey(base: "OPENAI_API_KEY" | "TYPESAFE_API_KEY"): string | undefined {
+export function readKey(base: "OPENAI_API_KEY" | "TYPESAFE_API_KEY" | "ANTHROPIC_API_KEY"): string | undefined {
   // OPEN_AI 는 이 도구보다 먼저 그 이름으로 키를 넣어 둔 기계를 위한 자리다.
   const legacy = base === "OPENAI_API_KEY" ? ["OPEN_AI"] : [];
   const names = [`${base}_PATROL_JEV`, `${base}_patrol-jev`, base, ...legacy];
@@ -152,6 +162,11 @@ export function readKey(base: "OPENAI_API_KEY" | "TYPESAFE_API_KEY"): string | u
     if (value) return value;
   }
   return undefined;
+}
+
+/** 사진을 읽는 두 눈의 키. 없는 쪽은 undefined 이고 그 눈은 안 쓴다. */
+export function readEyeKeys(): { claude?: string; openai?: string } {
+  return { claude: readKey("ANTHROPIC_API_KEY"), openai: readKey("OPENAI_API_KEY") };
 }
 
 /** 브라우저로 내려보내는 몫. 키나 경로는 절대 담지 않는다. */

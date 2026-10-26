@@ -13,8 +13,9 @@ import {
   type Phrase,
 } from "@/core/manual";
 import { isPlate, isPlateShot } from "@/core/group";
-import { buildIljiHwpx, PHOTO_RATIO } from "@/core/hwpx/ilji";
-import { pickPhotos, readReportText, type IljiSlots } from "@/core/ilji-slots";
+import { buildIljiHwpx, PHOTO_RATIO, PHOTO_TABLES_PER_PAGE } from "@/core/hwpx/ilji";
+import { slotsFromDay } from "@/core/weekly";
+import { pickDoubts, pickPhotos, readReportText, type IljiSlots } from "@/core/ilji-slots";
 import { buildReport, DEFAULT_WORDING, learnWording, type Wording } from "@/core/report";
 import {
   commonDate,
@@ -23,7 +24,7 @@ import {
   stampFromClock,
   type ShotStamp,
 } from "@/core/shot-time";
-import type { Described, FirstPassInput, Group, Judged } from "@/core/types";
+import type { Described, FirstPassInput, Group, Judged, PhotoRole } from "@/core/types";
 import { GroupCard } from "@/ui/group-card";
 import { ManualCard } from "@/ui/manual-card";
 import { Meter, Tracks } from "@/ui/jev";
@@ -34,15 +35,19 @@ import {
   type FailedPhoto,
   type Prepared,
   type PreparedPhoto,
+  toBase64,
 } from "@/ui/photo";
 import { DayCalendar, PastDay } from "@/ui/days";
-import { cellPhotoBytes, downloadBytes } from "@/ui/hwpx-photo";
+import { cellPhotoBytes, downloadBytes, recropJpeg, smallJpeg } from "@/ui/hwpx-photo";
 import { PeriodReport } from "@/ui/period";
-import { deletePhotos, savePhotos } from "@/ui/photo-store";
+import { Pick, pickedLine, type Picked } from "@/ui/pick";
+import { fillKeptForm } from "@/ui/form-bridge";
+import { deletePhotos, loadPhotos, savePhotos } from "@/ui/photo-store";
+import { proofOf, writeShotProof } from "@/core/shot-proof";
 import { readManual, saveManual } from "@/ui/manual-pref";
-import type { SavedSpot } from "@/core/period";
+import { customPeriod, monthPeriod, weekPeriod, type SavedSpot } from "@/core/period";
 import { DongPicker, type DongChoice } from "@/ui/dong";
-import { ReportExtras, weeklyFormOf } from "@/ui/report-extras";
+import { periodFormOf, ReportExtras, weeklyFormOf } from "@/ui/report-extras";
 import { ReportView } from "@/ui/report-view";
 import {
   appendRun,
@@ -63,13 +68,17 @@ import {
   readWording,
   recallLane,
   recallWork,
+  runsBetween,
+  runsCsv,
   saveDay,
   summarise,
   writeBaseline,
   writeDong,
 } from "@/ui/usage";
+import { LayerStack } from "@/ui/layer-stack";
+import { downloadRunsCsv, WorkLine } from "@/ui/work-line";
 
-type Stage = "home" | "field" | "report";
+type Stage = "home" | "field" | "report" | "calendar";
 type Phase = "idle" | "prepare" | "describe" | "judge" | "done";
 /**
  * 어느 길로 만드는가.
@@ -78,15 +87,25 @@ type Phase = "idle" | "prepare" | "describe" | "judge" | "done";
  */
 type Mode = "auto" | "manual";
 
+/** `/api/quota` 가 주는 것. */
+interface QuotaBody {
+  limit?: number;
+  left?: number | null;
+}
+
 export default function PatrolApp({
   config,
   ready,
 }: {
   config: ClientConfig;
-  ready: { vision: boolean; firstPass: boolean };
+  ready: { vision: boolean; eye: string | null; firstPass: boolean };
 }) {
   const [stage, setStage] = useState<Stage>("home");
   const [phase, setPhase] = useState<Phase>("idle");
+  /** 홈에서 무엇을 뽑기로 했나. 고르기 전에는 뽑기 화면, 고른 뒤에는 그 길만 보인다. 이 회차 동안만 기억한다. */
+  const [pick, setPick] = useState<Picked | null>(null);
+  const [resultBusy, setResultBusy] = useState(false);
+  const [resultNote, setResultNote] = useState<string | null>(null);
   /**
    * **이번 회차를 어느 길로 만들었나.** 화면에 무엇을 그릴지는 이 값이 정한다.
    *
@@ -109,6 +128,8 @@ export default function PatrolApp({
   const closeToast = useCallback(() => setToast(null), []);
 
   const [photos, setPhotos] = useState<PreparedPhoto[]>([]);
+  /** 사진 줄이기 진행. 숫자가 안 움직이면 멈춘 것으로 보인다. */
+  const [opening, setOpening] = useState({ done: 0, total: 0 });
   const [described, setDescribed] = useState<Record<number, Described>>({});
   const [judged, setJudged] = useState<Record<number, Judged>>({});
   const [groups, setGroups] = useState<Group[]>([]);
@@ -126,8 +147,9 @@ export default function PatrolApp({
   const [picked, setPicked] = useState<string | null | undefined>(undefined);
   /** 달력에서 고른 지난 날짜. 고르면 그날 일지를 본다. */
   const [pickedDay, setPickedDay] = useState<string | null>(null);
-  /** 달력은 접혀 있는 것이 기본이다. 날마다 쓰는 화면에서 자리를 먼저 차지하면 안 된다. */
-  const [calendarOpen, setCalendarOpen] = useState(false);
+  /** 달력 탭에서 고른 날의 일지를 파일로 낼 때. */
+  const [pastBusy, setPastBusy] = useState(false);
+  const [pastNote, setPastNote] = useState<string | null>(null);
   /** 맛보기 한도. limit 0 이면 한도가 없다(로컬에 받아 쓰는 경우). */
   const [quota, setQuota] = useState<{ limit: number; left: number | null }>({ limit: 0, left: null });
   const pass = useRef<string | null>(null);
@@ -165,6 +187,15 @@ export default function PatrolApp({
   void logVersion;
   const runs = mounted ? readRuns().length : 0;
   // 지난 날짜들. 한 회차가 끝날 때마다 다시 읽는다.
+  /** 이 브라우저에 받아 둔 부서 양식의 이름. 뽑기의 양식 걸음이 이것으로 열리거나 건너뛴다. 붙은 뒤에만 읽는다. */
+  const officeIljiName = useMemo(() => {
+    void logVersion; // 양식을 올리거나 지우면 기록이 바뀌어 다시 읽는다.
+    return mounted ? (weeklyFormOf()?.name ?? null) : null;
+  }, [mounted, logVersion]);
+  const officePeriodName = useMemo(() => {
+    void logVersion;
+    return mounted ? (periodFormOf()?.name ?? null) : null;
+  }, [mounted, logVersion]);
   const days = useMemo(() => {
     // 회차가 끝날 때마다 다시 읽는다. localStorage 가 바뀐 것을 리액트는 모른다.
     void logVersion;
@@ -271,9 +302,13 @@ export default function PatrolApp({
         const judgment = judged[index];
         return judgment?.stage === stage ? (judgment.stageProbabilities?.[stage] ?? 0) : 0;
       };
-      const picks = pickPhotos(groups, plateAt, stageScore);
-      const shot = (index: number | null) =>
-        index === null ? Promise.resolve(null) : cellPhotoBytes(photoByIndex[index]?.url, ratio);
+      const picks = pickPhotos(groups, plateAt, stageScore, madeBy === "manual");
+      const shot = async (index: number | null) => {
+        if (index === null) return null;
+        const photo = photoByIndex[index];
+        const bytes = await cellPhotoBytes(photo?.url, ratio);
+        return bytes ? writeShotProof(bytes, proofOf(photo?.date, photo?.time, photo?.timeFrom)) : null;
+      };
       const photos = await Promise.all(
         picks.map(async (pick) => ({
           caption: pick.caption,
@@ -299,7 +334,7 @@ export default function PatrolApp({
         photos,
       };
     },
-    [config, date, described, dongLabel, groups, judged, photoByIndex, report.blocks, reportText],
+    [config, date, described, dongLabel, groups, judged, madeBy, photoByIndex, report.blocks, reportText],
   );
 
   /** 한글 파일(기본 양식). 서버로는 아무것도 안 간다. */
@@ -310,16 +345,112 @@ export default function PatrolApp({
     setCopied(true);
   }, [collectSlots, date]);
 
+  /**
+   * 뽑기에서 고른 양식으로 순찰일지를 바로 낸다. 부서 양식을 골랐는데 이 브라우저에 없으면 기본 양식으로 내고 그렇다고 적는다.
+   * 보고서 탭의 두 단추와 같은 코드다. 고르는 일은 홈에서 끝났으니 여기서는 결과만.
+   */
+  const getResult = useCallback(async () => {
+    setResultBusy(true);
+    setResultNote(null);
+    try {
+      if (pick?.form === "office") {
+        const note = await fillKeptForm(collectSlots, date);
+        if (note !== null) {
+          setResultNote(note);
+          setCopied(true);
+          return;
+        }
+        setResultNote("부서 양식이 이 브라우저에 없어 기본 양식으로 냈어요.");
+      }
+      await makeHwpx();
+      setResultNote((current) => current ?? "기본 양식으로 내려받았어요.");
+    } catch (cause) {
+      setResultNote(cause instanceof Error ? cause.message : "파일을 만들지 못했어요.");
+    } finally {
+      setResultBusy(false);
+    }
+  }, [collectSlots, date, makeHwpx, pick]);
+
+  /**
+   * 보고서 · 주간 일지를 뽑는 길에서 사진을 올려 회차가 끝났다. 그 날이 고른 기간 밖이면 기간을 그 날이 든 주 · 달로 옮겨서 보인다.
+   * 「지난 주」를 골랐는데 오늘 사진을 올리면 지난 주 보고서는 비어 있다. 흐름이 거기서 끊기지 않게 한다. 고른 값은 안 바꾸고 보일 때만 옮긴다.
+   */
+  const shifted = useMemo((): { pick: Picked | null; note: string | null } => {
+    if (phase !== "done" || !pick || pick.want === "ilji" || groups.length === 0) return { pick, note: null };
+    const period = pick.kind === "month" && pick.month ? monthPeriod(pick.month) : pick.kind === "week" && pick.week ? weekPeriod(pick.week) : pick.kind === "custom" && pick.from && pick.to ? customPeriod(pick.from, pick.to) : null;
+    if (!period || (date >= period.from && date <= period.to)) return { pick, note: null };
+    const moved: Picked =
+      pick.kind === "month"
+        ? { ...pick, month: date.slice(0, 7) }
+        : pick.kind === "week"
+          ? { ...pick, week: date }
+          : { ...pick, from: date < period.from ? date : period.from, to: date > period.to ? date : period.to };
+    const day = `${date.slice(5, 7).replace(/^0/, "")}월 ${date.slice(8, 10).replace(/^0/, "")}일`;
+    return { pick: moved, note: `올린 사진이 ${day} 것이라 기간을 그 날이 든 ${pick.kind === "month" ? "달" : pick.kind === "week" ? "주" : "날까지"}로 맞췄어요.` };
+  }, [date, groups.length, phase, pick]);
+
+  /** 달력에서 고른 날을 일지 자리로. 보관한 사진 사본을 그 양식의 칸 비율로 자른다. 주간 일지가 하루를 모으는 것과 같은 코드다. */
+  const collectPast = useCallback(
+    async (ratio: number): Promise<IljiSlots> => {
+      if (!pastRecord) throw new Error("날을 먼저 고르세요.");
+      const stored = await loadPhotos(pastRecord.date);
+      const items = stored
+        ? await Promise.all(
+            stored.items.map(async (item) => ({
+              before: item.before ? await recropJpeg(item.before, ratio) : null,
+              after: item.after ? await recropJpeg(item.after, ratio) : null,
+            })),
+          )
+        : null;
+      return slotsFromDay(pastRecord, items, config.officer, config.unit, PHOTO_TABLES_PER_PAGE);
+    },
+    [config.officer, config.unit, pastRecord],
+  );
+
+  /** 달력 탭의 「이 날 순찰일지 받기」. 부서 양식이 있으면 그 양식, 없으면 기본 양식. 서버로는 아무것도 안 간다. */
+  const getPast = useCallback(
+    async (form: "office" | "basic") => {
+      if (!pastRecord) return;
+      setPastBusy(true);
+      setPastNote(null);
+      try {
+        if (form === "office") {
+          const note = await fillKeptForm(collectPast, pastRecord.date);
+          if (note !== null) {
+            setPastNote(note);
+            return;
+          }
+        }
+        const slots = await collectPast(PHOTO_RATIO);
+        downloadBytes(buildIljiHwpx(slots), `${slots.dong} 현장 순찰 일지(기본 양식) ${pastRecord.date}.hwpx`);
+        setPastNote("기본 양식으로 내려받았어요.");
+      } catch (cause) {
+        setPastNote(cause instanceof Error ? cause.message : "파일을 만들지 못했어요.");
+      } finally {
+        setPastBusy(false);
+      }
+    },
+    [collectPast, pastRecord],
+  );
+
   /** 알릴 말을 덮지 않고 잇는다. 한 회차에 알릴 것이 둘 이상일 수 있다. */
   const addNotice = useCallback((line: string) => {
     setNotice((current) => (current ? `${current} ${line}` : line));
+  }, []);
+  /** 앞서 적은 한 줄을 새 줄로 바꾼다. 나중에 안 사실이 앞 문장과 어긋나면 앞 문장은 지운다. 둘 다 남으면 모순으로 읽힌다. */
+  const swapNotice = useCallback((oldLine: string | null, line: string) => {
+    setNotice((current) => {
+      const rest = oldLine && current ? current.replace(oldLine, "").replace(/\s{2,}/g, " ").trim() : current;
+      return rest ? `${rest} ${line}` : line;
+    });
   }, []);
 
   const refreshQuota = useCallback(() => {
     fetch("/api/quota", { headers: passHeader(pass.current) })
       .then((response) => (response.ok ? response.json() : null))
-      .then((body: { limit?: number; left?: number | null } | null) => {
-        if (body) setQuota({ limit: body.limit ?? 0, left: body.left ?? null });
+      .then((body: QuotaBody | null) => {
+        if (!body) return;
+        setQuota({ limit: body.limit ?? 0, left: body.left ?? null });
       })
       .catch(() => undefined);
   }, []);
@@ -352,35 +483,14 @@ export default function PatrolApp({
    * 주소와 말은 사람이 적는다. 묶기·시각·문장·학습은 자동 모드와 똑같은 코드가 한다.
    */
   const runManual = useCallback(
-    async (files: File[]) => {
-      if (files.length === 0) return;
-      setError(null);
-      setNotice(null);
-      setEditedReport(null);
-      setStage("field");
+    async (opened: Prepared) => {
+      if (opened.photos.length === 0) return;
       setPhase("prepare");
       logged.current = false;
-
       setMadeBy("manual");
-
-      let opened: Prepared;
-      try {
-        // 네 번째 인자 false = 서버로 보낼 base64 를 안 만든다. 보낼 데가 없다.
-        opened = await preparePhotos(files, config.vision.maxEdge, photos.length, false);
-      } catch (cause) {
-        setPhase("idle");
-        setError(cause instanceof Error ? cause.message : "사진을 열지 못했습니다.");
-        return;
-      }
-      if (opened.failed.length > 0) addNotice(failedNote(opened.failed));
-      if (opened.photos.length === 0) {
-        setPhase("idle");
-        setError("올리신 사진을 한 장도 열지 못했습니다.");
-        return;
-      }
       setOrderedBy(opened.ordered);
       // 팝업은 7초면 사라진다. 까닭 대목은 사람이 옮겨 적어야 하니 안내 줄에도 남긴다.
-      const untimedNote = untimedToast(opened.photos);
+      const untimedNote = untimedToast(opened.photos, false);
       setToast(untimedNote);
       if (untimedNote) addNotice(untimedNote);
       const prepared = opened.photos;
@@ -404,63 +514,19 @@ export default function PatrolApp({
       setGroups((current) => [...current, ...made]);
       setPhase("done");
     },
-    [addNotice, config, manualLane, photos.length],
+    [addNotice, config, manualLane],
   );
 
-  /** 사진이 들어오면 (A) 사진→글 → (B) 글→판정 → (C) 묶기 까지 한 번에 흐른다. */
+  /** 검수를 마친 사진이 오면 (A) 사진→글 → (B) 글→판정 → (C) 묶기 까지 한 번에 흐른다. */
   const run = useCallback(
-    async (files: File[]) => {
-      if (files.length === 0) return;
-      setError(null);
-      setNotice(null);
-      setEditedReport(null);
-
-      // 맛보기 자리에서는 남은 만큼만 받는다. 30장을 올렸다가 10장에서 멈추는 것이 제일 나쁘다.
-      let taking = files;
-      if (quota.limit > 0 && quota.left !== null) {
-        if (quota.left <= 0) {
-          // 그 자리에서 수동으로 이어 간다. 묶기·시각·문장은 그대로 나온다.
-          await runManual(files);
-          addNotice(
-            `맛보기는 하루 ${quota.limit}장까지라 오늘은 다 읽었습니다. ` +
-              "사진 읽기만 빼고 직접 적는 길로 이어 갑니다. 묶기와 일지 글은 그대로 나옵니다. " +
-              "받아서 본인 키로 쓰시면 장수 제한이 없습니다.",
-          );
-          return;
-        }
-        if (files.length > quota.left) {
-          taking = files.slice(0, quota.left);
-          addNotice(
-            `맛보기는 하루 ${quota.limit}장까지라 앞의 ${taking.length}장만 읽습니다. ` +
-              "마지막 자리는 중간에서 잘릴 수 있습니다. " +
-              "받아서 본인 키로 쓰시면 장수 제한이 없습니다.",
-          );
-        }
-      }
-      setStage("field");
+    async (opened: Prepared) => {
+      if (opened.photos.length === 0) return;
       setPhase("prepare");
       logged.current = false;
-
       setMadeBy("auto");
-
-      let opened: Prepared;
-      try {
-        opened = await preparePhotos(taking, config.vision.maxEdge, photos.length);
-      } catch (cause) {
-        setPhase("idle");
-        setError(cause instanceof Error ? cause.message : "사진을 열지 못했습니다.");
-        return;
-      }
-      // 한 장이 안 열려도 나머지는 간다. 서른 장 가운데 한 장 때문에 그날 일지를 못 쓰면 안 된다.
-      if (opened.failed.length > 0) addNotice(failedNote(opened.failed));
-      if (opened.photos.length === 0) {
-        setPhase("idle");
-        setError("올리신 사진을 한 장도 열지 못했습니다.");
-        return;
-      }
       setOrderedBy(opened.ordered);
       // 팝업은 7초면 사라진다. 까닭 대목은 사람이 옮겨 적어야 하니 안내 줄에도 남긴다.
-      const untimedNote = untimedToast(opened.photos);
+      const untimedNote = untimedToast(opened.photos, true);
       setToast(untimedNote);
       if (untimedNote) addNotice(untimedNote);
 
@@ -519,16 +585,12 @@ export default function PatrolApp({
       const snappedCount = all.filter((photo) => rawStamps[photo.index]?.date && snapped[photo.index]?.date !== rawStamps[photo.index]?.date).length;
       const borrowedCount = all.filter((photo) => stamps[photo.index]?.borrowed).length;
       if (snappedCount > 0) addNotice(`${snappedCount}장은 찍힌 글자의 연도가 다르게 읽혀 그날 날짜로 맞췄습니다.`);
-      // 시각을 어디서 얻었는지 한 줄로. 사진을 열 때의 안내는 파일 기록만 본 것이라, 찍힌 글자에서 되찾은 장까지 더해 다시 적는다.
+      // 시각을 어디서 얻었는지 한 줄로. 사진을 열 때의 안내는 파일 속 기록만 본 것이라, 찍힌 글자에서 되찾은 장까지 더해
+      // **그 안내를 이 줄로 바꾼다.** 둘 다 남으면 「기록이 없다」와 일지의 시각이 모순으로 읽힌다(09-27 사용자).
       const fromFile = all.filter((photo) => photo.timeFrom === "exif").length;
       const fromText = all.filter((photo) => photo.timeFrom !== "exif" && rawStamps[photo.index]).length;
       const none = all.filter((photo) => !stamps[photo.index]).length;
-      addNotice(
-        `시각: 파일 기록 ${fromFile}장 · 사진에 찍힌 글자 ${fromText}장 · 옆 장에서 빌림 ${borrowedCount}장` +
-          (none > 0 ? ` · 없음 ${none}장(올라온 차례로 묶음, 점선 테두리)` : "") +
-          (borrowedCount > 0 ? " · 빌린 장은 섬네일에 「옆 장」" : "") +
-          ".",
-      );
+      swapNotice(untimedNote, timeSourceNote(all.length, fromFile, fromText, borrowedCount, none));
 
       // 되찾은 시각은 사진에 되돌려 적는다. 묶음 카드의 시각과 일지 머리글의 날짜가 이걸 쓴다.
       const timed = all.map((photo) => {
@@ -612,15 +674,89 @@ export default function PatrolApp({
       setPhase("done");
       refreshQuota();
     },
-    [addNotice, config, described, dong, dongLabel, judged, photos, quota, refreshQuota, runManual],
+    [addNotice, config, described, dong, dongLabel, judged, photos, refreshQuota, swapNotice],
   );
 
-  /** 사진을 받는 자리는 하나다. 어느 길로 갈지는 여기서 갈린다. */
+  /**
+   * 사진을 받는 자리. 열고 줄인 뒤 바로 (A)(B)(C) 로 흐른다.
+   * 어느 길(모델/직접)로 갈지는 들어올 때 정한다. 한도를 다 썼으면 직접 적는 길이다.
+   */
+  const intake = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
+      setError(null);
+      setNotice(null);
+      setEditedReport(null);
+
+      // 맛보기 자리에서는 남은 만큼만 받는다. 30장을 올렸다가 10장에서 멈추는 것이 제일 나쁘다.
+      let taking = files;
+      let way: Mode = mode;
+      if (way === "auto" && quota.limit > 0 && quota.left !== null) {
+        if (quota.left <= 0) {
+          // 그 자리에서 수동으로 이어 간다. 묶기·시각·문장은 그대로 나온다.
+          way = "manual";
+          addNotice(
+            `맛보기는 하루 ${quota.limit}장까지라 오늘은 다 읽었습니다. ` +
+              "사진 읽기만 빼고 직접 적는 길로 이어 갑니다. 묶기와 일지 글은 그대로 나옵니다. " +
+              "받아서 본인 키로 쓰시면 장수 제한이 없습니다.",
+          );
+        } else if (files.length > quota.left) {
+          taking = files.slice(0, quota.left);
+          addNotice(
+            `맛보기는 하루 ${quota.limit}장까지라 앞의 ${taking.length}장만 읽습니다. ` +
+              "마지막 자리는 중간에서 잘릴 수 있습니다. " +
+              "받아서 본인 키로 쓰시면 장수 제한이 없습니다.",
+          );
+        }
+      }
+      setMadeBy(way);
+      setStage("field");
+      setPhase("prepare");
+      logged.current = false;
+
+      let opened: Prepared;
+      try {
+        setOpening({ done: 0, total: taking.length });
+        opened = await preparePhotos(taking, config.vision.maxEdge, nextIndex(photos), (done, total) =>
+          setOpening({ done, total }),
+        );
+        setOpening({ done: 0, total: 0 });
+      } catch (cause) {
+        setPhase("idle");
+        setError(cause instanceof Error ? cause.message : "사진을 열지 못했습니다.");
+        return;
+      }
+      // 한 장이 안 열려도 나머지는 간다. 서른 장 가운데 한 장 때문에 그날 일지를 못 쓰면 안 된다.
+      if (opened.failed.length > 0) addNotice(failedNote(opened.failed));
+      if (opened.photos.length === 0) {
+        setPhase("idle");
+        setError("올리신 사진을 한 장도 열지 못했습니다.");
+        return;
+      }
+
+      // 모델로 가는 길이면 여기서 보낼 사본(base64)을 만든다. 직접 적는 길은 안 만든다. 사진이 안 나간다.
+      let ready: Prepared = opened;
+      if (way === "auto") {
+        try {
+          const withData = await Promise.all(opened.photos.map(async (photo) => ({ ...photo, data: await toBase64(photo.blob) })));
+          ready = { ...opened, photos: withData };
+        } catch (cause) {
+          setPhase("idle");
+          setError(cause instanceof Error ? cause.message : "사진을 준비하지 못했습니다.");
+          return;
+        }
+      }
+      void (way === "manual" ? runManual(ready) : run(ready));
+    },
+    [addNotice, config.vision.maxEdge, mode, photos, quota, run, runManual],
+  );
+
+  /** 사진을 받는 자리는 하나다. */
   const take = useCallback(
     (files: File[]) => {
-      void (mode === "manual" ? runManual(files) : run(files));
+      void intake(files);
     },
-    [mode, run, runManual],
+    [intake],
   );
 
   // 한 회차가 끝나면 로그를 한 줄 남긴다. 브라우저 안에만 쌓이고 아무 데도 안 간다.
@@ -645,6 +781,8 @@ export default function PatrolApp({
         manualEdits: edits,
         copied,
         baselineMinutes: readBaseline(),
+        learnedLanes: groups.filter((group) => group.learned).length,
+        roadMatched: Object.values(described).filter((d) => d.roadKnown === true).length,
       },
       config.log.mode,
     );
@@ -678,10 +816,15 @@ export default function PatrolApp({
       const judgment = judged[index];
       return judgment?.stage === stage ? (judgment.stageProbabilities?.[stage] ?? 0) : 0;
     };
-    const picks = pickPhotos(groups, plateAt, stageScore);
+    const picks = pickPhotos(groups, plateAt, stageScore, madeBy === "manual");
     const byId = new Map(groups.map((group) => [group.id, group]));
+    const proofAt = (index: number | null) => {
+      const photo = index === null ? undefined : photoByIndex[index];
+      return proofOf(photo?.date, photo?.time, photo?.timeFrom);
+    };
     const spots: SavedSpot[] = picks.map((pick) => {
       const group = byId.get(pick.groupId);
+      const doubts = group ? pickDoubts(group, pick, plateAt, stageScore) : [];
       return {
         address: group?.address ?? "",
         lane: group?.lane ?? "unknown",
@@ -691,6 +834,8 @@ export default function PatrolApp({
         pair: pick.pair,
         before: pick.before !== null,
         after: pick.after !== null,
+        shots: { before: proofAt(pick.before), after: proofAt(pick.after) },
+        ...(doubts.length > 0 ? { doubts } : {}),
       };
     });
     const timer = setTimeout(() => {
@@ -712,8 +857,13 @@ export default function PatrolApp({
     if (signature !== savedShots.current) {
       savedShots.current = signature;
       void (async () => {
-        const shot = (index: number | null) =>
-          index === null ? Promise.resolve(null) : cellPhotoBytes(photoByIndex[index]?.url, PHOTO_RATIO, 720);
+        // 통째로 줄여 둔다. 칸 비율로 자르는 일은 파일을 낼 때 한다. 여기서 기본 양식 비율로 잘라 두면
+        // 비율이 다른 부서 양식에서 한 번 더 잘려, 세로 사진은 3분의 1만 남는다(10-03 실물 보고서).
+        const shot = async (index: number | null) => {
+          if (index === null) return null;
+          const bytes = await smallJpeg(photoByIndex[index]?.url, 960);
+          return bytes ? writeShotProof(bytes, proofAt(index)) : null;
+        };
         const items = await Promise.all(picks.map(async (pick) => ({ before: await shot(pick.before), after: await shot(pick.after) })));
         if (!cancelled) await savePhotos({ date, items });
       })();
@@ -722,9 +872,33 @@ export default function PatrolApp({
       clearTimeout(timer);
       cancelled = true;
     };
-  }, [phase, groups, judged, described, photos.length, photoByIndex, config.log.mode, config.dong, config.thresholds, date, dongLabel, reportText]);
+  }, [phase, groups, judged, described, photos.length, photoByIndex, config.log.mode, config.dong, config.thresholds, date, dongLabel, madeBy, reportText]);
 
   // ── 사람이 고치는 자리 ────────────────────────────────
+
+  /** 자리마다 지금 일지의 전 칸·후 칸에 실리는 장. 카드가 장별로 보여 주고, 사람이 거기서 바꾼다. */
+  const pickById = useMemo(() => {
+    const plateAt = (index: number) => isPlateShot(judged[index], described[index]?.signText, config.thresholds);
+    const stageScore = (index: number, stage: "before" | "after") => {
+      const judgment = judged[index];
+      return judgment?.stage === stage ? (judgment.stageProbabilities?.[stage] ?? 0) : 0;
+    };
+    return new Map(pickPhotos(groups, plateAt, stageScore, madeBy === "manual").map((pick) => [pick.groupId, pick]));
+  }, [config.thresholds, described, groups, judged, madeBy]);
+
+  /** 한 장의 쓰임을 정한다. 전·후는 한 자리에 한 장씩이라, 같은 쓰임을 가졌던 다른 장은 자동으로 돌린다. */
+  const setRole = (id: string, photoIndex: number, role: PhotoRole | null) =>
+    touch(id, (g) => {
+      const roles: Record<number, PhotoRole> = {};
+      for (const index of g.photos) {
+        const kept = g.roles?.[index];
+        if (index === photoIndex || kept === undefined) continue;
+        if (role !== null && role !== "skip" && kept === role) continue;
+        roles[index] = kept;
+      }
+      if (role !== null) roles[photoIndex] = role;
+      return { ...g, roles: Object.keys(roles).length > 0 ? roles : undefined };
+    });
 
   const touch = (id: string, change: (group: Group) => Group) => {
     setEdits((n) => n + 1);
@@ -906,8 +1080,40 @@ export default function PatrolApp({
         />
       )}
 
-      {stage === "home" && (
+      {stage === "home" && pick === null && (
+        <Pick
+          officeIlji={officeIljiName}
+          officePeriod={officePeriodName}
+          hasDays={days.length > 0}
+          onPick={(next) => {
+            setPick(next);
+            setResultNote(null);
+          }}
+        />
+      )}
+
+      {stage === "home" && pick && pick.want !== "ilji" && (
+        <PeriodReport
+          key={pickedLine(pick)}
+          days={days}
+          dong={dongLabel ?? config.dong}
+          unit={config.unit}
+          officer={config.officer}
+          weekForm={weeklyFormOf}
+          periodForm={periodFormOf}
+          onChanged={() => setLogVersion((n) => n + 1)}
+          preset={pick}
+          onOther={() => setPick(null)}
+        />
+      )}
+
+      {stage === "home" && pick?.want === "ilji" && (
+        <PickedBar line={pickedLine(pick)} hint="사진을 올리면 바로 나와요." onOther={() => setPick(null)} />
+      )}
+
+      {stage === "home" && pick && (
         <Home
+          compact={pick.want !== "ilji"}
           onFiles={take}
           busy={busy}
           ready={ready}
@@ -926,55 +1132,73 @@ export default function PatrolApp({
         />
       )}
 
-      {stage !== "home" && (
-        <section className="rounded-xl p-3" style={{ border: "1px solid var(--line)" }}>
-          <button
-            onClick={() => setCalendarOpen((open) => !open)}
-            className="flex w-full items-center gap-2 text-left text-[12px]"
-          >
-            <span>지난 기록</span>
-            {days.length > 0 && (
-              <span className="tnum text-[11px] text-[var(--muted)]">{days.length}일</span>
-            )}
-            <span className="ml-auto text-[11px] text-[var(--muted)]">
-              {calendarOpen ? "접기" : "열기"}
+      {stage === "calendar" && (
+        <section className="space-y-3 rounded-xl p-3" style={{ border: "1px solid var(--line)" }}>
+          <p className="text-[12px]">
+            <b>달력</b>
+            <span className="tnum text-[11px] text-[var(--muted)]">
+              {days.length > 0 ? ` · 일지를 남긴 날 ${days.length}일 · 날을 누르면 그날 글이 보이고 일지로 받을 수 있어요` : " · 아직 일지를 남긴 날이 없어요"}
             </span>
-          </button>
+          </p>
+          <DayCalendar days={days} picked={pickedDay} onPick={setPickedDay} />
+        </section>
+      )}
 
-          {calendarOpen && (
-            <div className="mt-3 space-y-3">
-              <DayCalendar days={days} picked={pickedDay} onPick={setPickedDay} />
+      {stage === "calendar" && pastRecord && (
+        <>
+          <PastDay
+            record={pastRecord}
+            onCopy={() => {
+              navigator.clipboard?.writeText(pastRecord.report).catch(() => undefined);
+            }}
+            onDelete={() => {
+              // 잘못 만든 날을 담당자가 지운다. 글·자리 목록(localStorage)과 사진 사본(IndexedDB) 둘 다. 이 기기 안의 일이다.
+              removeDay(pastRecord.date);
+              void deletePhotos(pastRecord.date);
+              setPickedDay(null);
+              setLogVersion((n) => n + 1);
+            }}
+          />
+          <DayForms date={pastRecord.date} office={officeIljiName} busy={pastBusy} note={pastNote} onGet={(form) => void getPast(form)} />
+        </>
+      )}
+
+      {(stage === "field" || stage === "report") && photos.length > 0 && (
+        <>
+          {phase === "done" && pick && pick.want !== "ilji" && groups.length > 0 && (
+            <>
+              {shifted.note && <p className="text-[11.5px] text-[var(--muted)]">{shifted.note}</p>}
               <PeriodReport
+                key={pickedLine(shifted.pick ?? pick)}
                 days={days}
                 dong={dongLabel ?? config.dong}
                 unit={config.unit}
                 officer={config.officer}
                 weekForm={weeklyFormOf}
+                periodForm={periodFormOf}
                 onChanged={() => setLogVersion((n) => n + 1)}
+                preset={shifted.pick ?? pick}
+                onOther={() => {
+                  setPick(null);
+                  setStage("home");
+                }}
               />
-            </div>
+            </>
           )}
-        </section>
-      )}
-
-      {pastRecord && (
-        <PastDay
-          record={pastRecord}
-          onCopy={() => {
-            navigator.clipboard?.writeText(pastRecord.report).catch(() => undefined);
-          }}
-          onDelete={() => {
-            // 잘못 만든 날을 담당자가 지운다. 글·자리 목록(localStorage)과 사진 사본(IndexedDB) 둘 다. 이 기기 안의 일이다.
-            removeDay(pastRecord.date);
-            void deletePhotos(pastRecord.date);
-            setPickedDay(null);
-            setLogVersion((n) => n + 1);
-          }}
-        />
-      )}
-
-      {stage !== "home" && !pickedDay && photos.length > 0 && (
-        <>
+          {phase === "done" && pick?.want === "ilji" && groups.length > 0 && (
+            <ResultCard
+              line={pickedLine(pick)}
+              spots={groups.length}
+              busy={resultBusy || busy}
+              note={resultNote}
+              onGet={() => void getResult()}
+              onDetail={() => setStage("report")}
+              onOther={() => {
+                setPick(null);
+                setStage("home");
+              }}
+            />
+          )}
           {madeBy === "manual" ? (
             <section className="space-y-1.5 rounded-xl p-3" style={{ border: "1px solid var(--line)" }}>
               <p className="text-[12px]">
@@ -1001,12 +1225,13 @@ export default function PatrolApp({
               genMs={genElapsed}
               genInput={sum(Object.values(described).map((d) => d.inputTokens))}
               genOutput={sum(Object.values(described).map((d) => d.outputTokens))}
-              genModel="OpenAI"
+              genModel={ready.eye ?? "사진 읽기"}
               jevModel={firstPassName}
             />
             {busy && (
               <p className="text-[11px] text-[var(--muted)]">
-                {phase === "prepare" && "사진을 줄이는 중…"}
+                {phase === "prepare" &&
+                  (opening.total > 0 ? `사진을 줄이는 중  ${opening.done}/${opening.total}` : "사진을 줄이는 중…")}
                 {phase === "describe" &&
                   `사진 → 글  ${genTimes.length}/${photos.length}`}
                 {phase === "judge" && `글 → 판정  ${jevTimes.length}/${photos.length}`}
@@ -1088,7 +1313,7 @@ export default function PatrolApp({
                   thresholds={config.thresholds}
                   isFirst={order === 0}
                   onLane={(lane: LaneOrUnknown) => touch(group.id, (g) => ({ ...g, lane }))}
-                  onAddress={(address) => touch(group.id, (g) => ({ ...g, address }))}
+                  onAddress={(address) => touch(group.id, (g) => ({ ...g, address, gpsMeters: undefined }))}
                   onWork={(work) => {
                     touch(group.id, (g) => ({ ...g, work }));
                     // 그 자리에 적을 말을 기억한다. 다음에 같은 자리면 그대로 얹는다.
@@ -1103,6 +1328,8 @@ export default function PatrolApp({
                   onMovePick={togglePick}
                   onMoveHere={() => moveTo(group.id)}
                   onRemove={() => removeGroup(group.id)}
+                  pick={pickById.get(group.id) ?? null}
+                  onRole={(photoIndex, role) => setRole(group.id, photoIndex, role)}
                 />
               ))}
               <AddMore onFiles={take} busy={busy} />
@@ -1135,12 +1362,33 @@ export default function PatrolApp({
 
           {stage === "report" && (
             <>
-              <ReportExtras collect={collectSlots} date={date} />
+              {/* 이 회차에 모델이 한 것 · 코드가 한 것 · 사람이 한 것. 일지 바로 위에 붙어 받는 사람도 같이 본다. */}
+              <WorkLine
+                head="이 회차에 도구가 한 일"
+                work={{
+                  calls: Object.keys(described).length + Object.keys(judged).length,
+                  learned: groups.filter((group) => group.learned).length,
+                  unknown: groups.filter((group) => group.lane === "unknown").length,
+                  edits,
+                }}
+              />
+              <ReportExtras
+                collect={collectSlots}
+                date={date}
+                onFilled={() => {
+                  // 부서 양식 파일로 받아 갔으면 복사한 것과 같다. 회차가 끝난 것으로 센다.
+                  setCopied(true);
+                  setLogVersion((n) => n + 1);
+                }}
+              />
               <ReportView
+                secondary={officeIljiName !== null}
                 report={report}
                 text={reportText}
                 edited={editedReport !== null || Object.keys(wording).length > 0}
-                onCopy={() => setCopied(true)}
+                onCopy={() => {
+                  setCopied(true);
+                }}
                 onEdit={(next) => {
                   // 고친 글에서 문구만 배운다. 틀이 달라졌으면 그 회차에만 남는다.
                   learnWordingLocal(learnWording(report.full, next, { ...DEFAULT_WORDING, ...wording }));
@@ -1168,6 +1416,97 @@ export default function PatrolApp({
 
 // ── 조각들 ────────────────────────────────────────────
 
+/** 달력에서 고른 날을 일지 파일로. 부서 양식이 이 브라우저에 있으면 그것이 첫 단추, 기본 양식이 둘째. */
+function DayForms({ date, office, busy, note, onGet }: { date: string; office: string | null; busy: boolean; note: string | null; onGet: (form: "office" | "basic") => void }) {
+  // 그날 돌린 회차. 달력에서 연 뒤에만 그려지는 조각이라 브라우저 기록을 바로 읽어도 된다.
+  const dayRuns = runsBetween(readRuns(), date, date);
+  const dayWork = summarise(dayRuns);
+  return (
+    <section className="space-y-2 rounded-xl p-3" style={{ border: "1px solid var(--line)" }}>
+      <p className="text-[12px]">
+        <b>{date} 순찰일지 받기</b>
+        <span className="text-[11px] text-[var(--muted)]"> · 그날 글과 사진 그대로</span>
+      </p>
+      {dayRuns.length > 0 && (
+        <WorkLine
+          head="그날 도구가 한 일"
+          runs={dayRuns}
+          work={{ calls: dayWork.modelCalls, learned: dayWork.learnedLanes, unknown: dayWork.unknownLanes, edits: dayWork.edits }}
+        />
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {office && (
+          <button type="button" onClick={() => onGet("office")} disabled={busy} className="rounded-full px-4 py-2 text-[12.5px] font-semibold" style={{ background: "var(--ink)", color: "var(--paper)", opacity: busy ? 0.5 : 1 }} title={office}>
+            <span className="iri-text">{busy ? "만드는 중" : "부서 양식"}</span>
+          </button>
+        )}
+        <button type="button" onClick={() => onGet("basic")} disabled={busy} className="rounded-full px-4 py-2 text-[12.5px] font-semibold" style={office ? { border: "1px solid var(--line)", opacity: busy ? 0.5 : 1 } : { background: "var(--ink)", color: "var(--paper)", opacity: busy ? 0.5 : 1 }}>
+          {busy && !office ? "만드는 중" : "기본 양식"}
+        </button>
+      </div>
+      {note && <p className="text-[11.5px]">{note}</p>}
+    </section>
+  );
+}
+
+/** 뽑기에서 고른 것 한 줄. 홈의 사진 자리 위에 붙는다. */
+function PickedBar({ line, hint, onOther }: { line: string; hint: string; onOther?: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl px-3 py-2 text-[12px]" style={{ border: "1px solid var(--line)" }}>
+      <b>{line}</b>
+      <span className="text-[var(--muted)]">{hint}</span>
+      {onOther && (
+        <button type="button" onClick={onOther} className="ml-auto text-[11.5px] text-[var(--muted)] underline underline-offset-2">
+          다른 것 뽑기
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 결과 카드. 회차가 끝나면 맨 위에 뜬다. 할 일은 「받기」 하나다.
+ * 글을 보거나 고치는 일은 보고서 탭에 그대로 있다. 고르는 일은 홈에서 끝났다.
+ */
+function ResultCard({
+  line,
+  spots,
+  busy,
+  note,
+  onGet,
+  onDetail,
+  onOther,
+}: {
+  line: string;
+  spots: number;
+  busy: boolean;
+  note: string | null;
+  onGet: () => void;
+  onDetail: () => void;
+  onOther: () => void;
+}) {
+  return (
+    <section className="space-y-2 rounded-xl p-3" style={{ border: "1px solid var(--ink)" }}>
+      <p className="text-[13px]">
+        <b>{line}</b>
+        <span className="tnum text-[var(--muted)]"> · 준비됐어요 · 자리 {spots}곳</span>
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onClick={onGet} disabled={busy} className="rounded-full px-5 py-2.5 text-[13px] font-semibold" style={{ background: "var(--ink)", color: "var(--paper)", opacity: busy ? 0.5 : 1 }}>
+          {busy ? "만드는 중" : `${line} 받기`}
+        </button>
+        <button type="button" onClick={onDetail} className="rounded-full px-3 py-2 text-[12px]" style={{ border: "1px solid var(--line)" }}>
+          글 보기 · 고치기
+        </button>
+        <button type="button" onClick={onOther} className="text-[11.5px] text-[var(--muted)] underline underline-offset-2">
+          다른 것 뽑기
+        </button>
+      </div>
+      {note && <p className="text-[11.5px]">{note}</p>}
+    </section>
+  );
+}
+
 function Header({
   stage,
   setStage,
@@ -1181,7 +1520,7 @@ function Header({
   setStage: (stage: Stage) => void;
   dong: string;
   unit: string;
-  ready: { vision: boolean; firstPass: boolean };
+  ready: { vision: boolean; eye: string | null; firstPass: boolean };
   mode: Mode;
   runs: number;
 }) {
@@ -1189,6 +1528,7 @@ function Header({
     ["home", "홈"],
     ["field", "현장"],
     ["report", "보고서"],
+    ["calendar", "달력"],
   ];
 
   return (
@@ -1197,9 +1537,7 @@ function Header({
         <h1 className="text-[15px] font-semibold tracking-tight">
           {unit} <span className="text-[var(--muted)]">· {dong}</span>
         </h1>
-        <p className="text-[11px] text-[var(--muted)]">
-          사진을 올리면 순찰일지 글이 나옵니다.
-        </p>
+        <p className="text-[11px] text-[var(--muted)]">사진을 올리면 순찰일지 글이 나옵니다.</p>
       </div>
 
       <nav className="ml-auto flex gap-1 rounded-lg p-0.5" style={{ background: "var(--wash)" }}>
@@ -1225,7 +1563,7 @@ function Header({
           <span>code · 직접</span>
         ) : (
           <>
-            <Dot ok={ready.vision} label="OpenAI" />
+            <Dot ok={ready.vision} label={ready.eye ?? "사진 읽기"} />
             <Dot ok={ready.firstPass} label="Jev" iri />
           </>
         )}
@@ -1270,10 +1608,12 @@ function Home({
   dong,
   onDong,
   onManual,
+  compact = false,
+  compactHint = "기록이 없거나 오늘 것을 더하려면 그 날 사진을 올려요. 끝나면 위의 보고서가 바로 나와요.",
 }: {
   onFiles: (files: File[]) => void;
   busy: boolean;
-  ready: { vision: boolean; firstPass: boolean };
+  ready: { vision: boolean; eye: string | null; firstPass: boolean };
   quota: { limit: number; left: number | null };
   mode: Mode;
   /** 오늘 맛보기 몫을 다 썼나. 그래서 직접 적는 길로 열린 것인지 화면이 말해 준다. */
@@ -1282,8 +1622,15 @@ function Home({
   onDong: (name: string | null, choice: DongChoice | null) => void;
   /** 「수동」 단추를 눌렀을 때. 켜면 사진을 모델로 보내지 않는다. */
   onManual: (on: boolean) => void;
+  /** 보고서 · 주간 일지 길의 작은 꼴. 사진 자리를 낮게 하고 설명 칸을 뺀다. 위의 「받기」와 한 눈에 들어오게. */
+  compact?: boolean;
+  /** 작은 꼴의 둘째 줄. 위에 무엇이 차오르는지(보고서 · 위험 일지)를 말한다. */
+  compactHint?: string;
 }) {
   const [over, setOver] = useState(false);
+  // 겹 속으로 사진이 한 장 떠날 때마다 하나씩 올라간다. 사진기 표식이 그 값으로 「찰칵」을 다시 튼다.
+  const [shot, setShot] = useState(0);
+  const onShot = useCallback(() => setShot((n) => n + 1), []);
 
   return (
     <section className="space-y-3">
@@ -1334,10 +1681,8 @@ function Home({
 
       {mode === "auto" && quota.limit > 0 && quota.left !== null && (
         <div className="space-y-0.5 text-[11.5px] text-[var(--muted)]">
-          <p>
-            맛보기라 하루 {quota.limit}장까지 읽어 드립니다.{" "}
-            <b className="text-[var(--ink)]">오늘 {quota.left}장 남음.</b>
-          </p>
+          {/* 장수는 서버가 준 값(demoLimit, 공개 천장 10)을 그대로 적는다. 화면이 숫자를 지어내지 않게. */}
+          <p>토큰량 증가로, 하루 {quota.limit}장으로 제한됩니다.</p>
           <p>
             제한 없이 쓰시려면{" "}
             <a
@@ -1359,12 +1704,23 @@ function Home({
           setOver(true);
         }}
         onDragLeave={() => setOver(false)}
+        onPointerMove={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          const x = ((event.clientX - rect.left) / rect.width - 0.5) * 2;
+          const y = ((event.clientY - rect.top) / rect.height - 0.5) * 2;
+          event.currentTarget.style.setProperty("--look-x", x.toFixed(3));
+          event.currentTarget.style.setProperty("--look-y", y.toFixed(3));
+        }}
+        onPointerLeave={(event) => {
+          event.currentTarget.style.setProperty("--look-x", "0");
+          event.currentTarget.style.setProperty("--look-y", "0");
+        }}
         onDrop={(event) => {
           event.preventDefault();
           setOver(false);
           onFiles([...event.dataTransfer.files].filter(isImageFile));
         }}
-        className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl px-6 py-10 text-center ${over ? "iri-edge" : ""}`}
+        className={`relative flex cursor-pointer flex-col items-center justify-center gap-2 overflow-hidden rounded-2xl px-6 text-center ${compact ? "min-h-[88px] py-3" : "min-h-[260px] py-10"} ${over ? "iri-edge" : ""}`}
         style={{ background: "var(--wash)", border: over ? "1px solid transparent" : "1px dashed var(--line)" }}
       >
         <input
@@ -1375,12 +1731,29 @@ function Home({
           disabled={busy}
           onChange={(event) => onFiles([...(event.target.files ?? [])].filter(isImageFile))}
         />
-        <CameraMark />
+        {compact ? (
+          <span className="flex items-center gap-2 text-[12.5px]">
+            <CameraMark shot={shot} busy={over || busy} />
+            <span className="text-left">
+              <b>사진으로 일지 먼저 만들기</b>
+              <br />
+              <span className="text-[11.5px] text-[var(--muted)]">{compactHint}</span>
+            </span>
+          </span>
+        ) : (
+          <>
+            <LayerStack active={over || busy} onShot={onShot} />
+            {/* 표식은 겹 위에 떠 있다. 사진이 여기서 나와 겹을 지나 내려간다. */}
+            <span className="relative z-10 -translate-y-[70px] drop-shadow-[0_6px_10px_rgba(0,0,0,0.12)]">
+              <CameraMark shot={shot} busy={over || busy} />
+            </span>
+          </>
+        )}
       </label>
 
       {!ready.vision && (
         <p className="text-[11.5px] text-[var(--muted)]">
-          <b className="text-[var(--ink)]">OPENAI_API_KEY</b> 가 없어 사진을 글로 옮기지
+          사진을 읽을 키(<b className="text-[var(--ink)]">ANTHROPIC_API_KEY</b> 또는 <b className="text-[var(--ink)]">OPENAI_API_KEY</b>)가 없어 사진을 글로 옮기지
           못합니다. <b className="text-[var(--ink)]">직접 적기</b>는 키 없이 그대로 씁니다.
           사진까지 읽히려면 `.env.example` 을 `.env.local` 로 복사해 키를 넣고 다시 띄워 주세요.
         </p>
@@ -1392,6 +1765,7 @@ function Home({
         </p>
       )}
 
+      {!compact && (
       <ol className="grid gap-2 text-[11.5px] text-[var(--muted)] sm:grid-cols-3">
         {mode === "auto" ? (
           <>
@@ -1426,6 +1800,7 @@ function Home({
           프로그램이 마무리합니다. (자동)
         </li>
       </ol>
+      )}
     </section>
   );
 }
@@ -1486,7 +1861,25 @@ function Baseline({ onDone }: { onDone: (minutes: number | null) => void }) {
 
 function Footer({ runs, threads }: { runs: number; threads: string }) {
   const [open, setOpen] = useState(false);
+  const [copiedCsv, setCopiedCsv] = useState(false);
   const stats = open ? summarise(readRuns()) : null;
+
+  /**
+   * 회차마다 한 줄인 CSV 를 파일로 받는다. 측정표에 붙이는 길이다. 숫자와 시각뿐이다.
+   * 앞에 BOM 을 둔다. 엑셀이 그게 없으면 한글을 깨뜨린다. 폰에서는 공유 창이 열린다.
+   */
+  const downloadCsv = () => downloadRunsCsv(readRuns());
+
+  /** 같은 CSV 를 클립보드에. 파일 받기가 막힌 자리(앱 안 웹뷰)의 둘째 길. */
+  const copyCsv = async () => {
+    try {
+      await navigator.clipboard.writeText(runsCsv(readRuns()));
+      setCopiedCsv(true);
+      setTimeout(() => setCopiedCsv(false), 1500);
+    } catch {
+      // 클립보드가 막힌 브라우저에서는 조용히 넘어간다. 기록이 사라지는 것은 아니다.
+    }
+  };
 
   return (
     <footer className="mt-auto pt-4 text-[10.5px] text-[var(--muted)]">
@@ -1526,10 +1919,28 @@ function Footer({ runs, threads }: { runs: number; threads: string }) {
         )}
       </p>
       {stats && (
-        <p className="tnum mt-1">
-          {stats.runs}회 · {stats.photos}장 · 한 회차 중앙값 {stats.medianSeconds}초
-          {stats.baselineMinutes !== null && ` · 도입 전 ${stats.baselineMinutes}분`}
-        </p>
+        <>
+          <p className="tnum mt-1">
+            {stats.runs}회 · {stats.photos}장 · 한 회차 중앙값 {stats.medianSeconds}초
+            {stats.baselineMinutes !== null && ` · 도입 전 ${stats.baselineMinutes}분`}
+          </p>
+          {/* 모델이 한 것 · 코드가 한 것 · 사람이 한 것. 회차가 쌓이며 호출과 고침이 내려가고 기억이 오르는지를 이 줄에서 본다. */}
+          <p className="tnum">
+            모델에 물음 {stats.modelCalls} · 지난번 고친 대로 {stats.learnedLanes} · 모르겠음 {stats.unknownLanes} · 고친 횟수 {stats.edits}
+            {stats.runs > 0 && (
+              <>
+                {" · "}
+                <button onClick={downloadCsv} className="underline underline-offset-2">
+                  CSV 받기
+                </button>
+                {" · "}
+                <button onClick={() => void copyCsv()} className="underline underline-offset-2">
+                  {copiedCsv ? "복사됨" : "복사"}
+                </button>
+              </>
+            )}
+          </p>
+        </>
       )}
     </footer>
   );
@@ -1634,42 +2045,61 @@ function applyLearned(
  * 굵은 테두리에 주황 몸통. 도구의 표식이라 **Jev 무지개와는 색이 다르다**. 무지개는
  * 「Jev 가 낸 값」에만 쓰는 표시라, 표식이 그 자리를 빌려 쓰면 규칙이 흐려진다.
  * 테두리는 글자색을 따라가 밝은 화면에서도 어두운 화면에서도 읽힌다.
+ *
+ * 살아 있는 것처럼 움직인다(`globals.css` 의 `.cam-*`).
+ *   · 겹과 같이 숨 쉬듯 뜬다
+ *   · 렌즈 속 빛점이 손(마우스)을 따라본다
+ *   · 이따금 눈을 깜빡인다(렌즈가 잠깐 좁아진다)
+ *   · 사진 한 장이 겹 속으로 떠날 때 「찰칵」: 몸이 눌렸다 튀고, 번쩍이고, 움직임 선이 뻗는다
+ *   · 사진을 끌어 오거나 읽는 동안에는 조금 더 빨리 뛴다
+ * 움직임 줄이기를 켠 기기에서는 가만히 있다.
  */
-function CameraMark() {
+function CameraMark({ shot = 0, busy = false }: { shot?: number; busy?: boolean }) {
   return (
-    <svg
-      width="56"
-      height="56"
-      viewBox="0 0 56 56"
-      fill="none"
-      role="img"
-      aria-label="사진"
-      style={{ color: "var(--ink)" }}
-    >
-      {/* 몸통. 각진 상자가 아니라 둥글고 도톰하게. */}
-      <path
-        d="M10 20c0-3.3 2.7-6 6-6h3.2c1.1 0 2.1-.6 2.6-1.5l1-1.8c.5-.9 1.5-1.5 2.6-1.5h5.2c1.1 0 2.1.6 2.6 1.5l1 1.8c.5.9 1.5 1.5 2.6 1.5H40c3.3 0 6 2.7 6 6v15c0 3.3-2.7 6-6 6H16c-3.3 0-6-2.7-6-6V20Z"
-        fill="#F9871F"
-        stroke="currentColor"
-        strokeWidth="2.6"
-        strokeLinejoin="round"
-      />
+    <span className={`cam-float ${busy ? "cam-busy" : ""}`}>
+      {/* key 가 바뀌면 찰칵 움직임을 처음부터 다시 튼다. 첫 그림(0)에서는 안 튼다. */}
+      <span key={shot} className={`cam-body ${shot > 0 ? "cam-shot" : ""}`}>
+        <svg
+          width="56"
+          height="56"
+          viewBox="0 0 56 56"
+          fill="none"
+          role="img"
+          aria-label="사진"
+          style={{ color: "var(--ink)", overflow: "visible" }}
+        >
+          {/* 번쩍: 찰칵 때만 잠깐 */}
+          <circle className="cam-flash" cx="40" cy="20.5" r="14" fill="#FFE2B8" />
 
-      {/* 렌즈 */}
-      <circle cx="28" cy="28" r="8.4" fill="var(--paper)" stroke="currentColor" strokeWidth="2.6" />
-      <circle cx="24.8" cy="24.8" r="1.9" fill="currentColor" opacity="0.85" />
+          {/* 몸통. 각진 상자가 아니라 둥글고 도톰하게. */}
+          <path
+            d="M10 20c0-3.3 2.7-6 6-6h3.2c1.1 0 2.1-.6 2.6-1.5l1-1.8c.5-.9 1.5-1.5 2.6-1.5h5.2c1.1 0 2.1.6 2.6 1.5l1 1.8c.5.9 1.5 1.5 2.6 1.5H40c3.3 0 6 2.7 6 6v15c0 3.3-2.7 6-6 6H16c-3.3 0-6-2.7-6-6V20Z"
+            fill="#F9871F"
+            stroke="currentColor"
+            strokeWidth="2.6"
+            strokeLinejoin="round"
+          />
 
-      {/* 플래시 */}
-      <circle cx="40" cy="20.5" r="1.7" fill="currentColor" />
+          {/* 렌즈. 깜빡일 때 세로로 잠깐 좁아진다. */}
+          <g className="cam-lens">
+            <circle cx="28" cy="28" r="8.4" fill="var(--paper)" stroke="currentColor" strokeWidth="2.6" />
+            <circle className="cam-eye" cx="24.8" cy="24.8" r="1.9" fill="currentColor" opacity="0.85" />
+          </g>
 
-      {/* 눌렀다는 기척. 캐릭터의 움직임 선에서 가져왔다. */}
-      <path
-        d="M5.5 16.5 3 13M50.5 16.5 53 13"
-        stroke="#F9871F"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-      />
-    </svg>
+          {/* 플래시 */}
+          <circle className="cam-bulb" cx="40" cy="20.5" r="1.7" fill="currentColor" />
+
+          {/* 눌렀다는 기척. 캐릭터의 움직임 선에서 가져왔다. */}
+          <path
+            className="cam-lines"
+            d="M5.5 16.5 3 13M50.5 16.5 53 13"
+            stroke="#F9871F"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+          />
+        </svg>
+      </span>
+    </span>
   );
 }
 
@@ -1710,13 +2140,36 @@ function failedNote(failed: FailedPhoto[]): string {
  * 몇 장인지, 그리고 폰이 넘겨준 파일에 기록 흔적이 있었는지까지 적는다. 폰 사진첩에는
  * 시각이 보이는데 여기서 못 읽는 일이 있어서, 어디서 사라졌는지를 사람이 전해 줄 수 있게.
  */
-function untimedToast(photos: PreparedPhoto[]): string | null {
+function untimedToast(photos: PreparedPhoto[], willReadText: boolean): string | null {
   const untimed = photos.filter((photo) => photo.timeFrom === null).length;
   if (untimed === 0) return null;
   // 까닭(EXIF 자리·XMP·지문)은 photo.probe 에 남아 있다. 화면에는 안 적는다. 사람이 읽을 말이 아니다.
-  // 이 시점은 파일 기록만 본 것이다. 사진에 찍힌 시각 글자는 사진→글 뒤에 읽으므로 「못 읽었다」고 단정하지 않는다.
+  // 이 시점은 파일 속 기록만 본 것이다. 사진 위에 찍힌 시각 글자는 사진→글 뒤에 읽으므로 「못 읽었다」고 단정하지 않는다.
   // 09-26 실물: 78장 전부 파일 기록이 없었지만 63장은 찍힌 글자로 시각을 되찾았는데, 이 문구가 「78장 못 읽음」이라고 적었다.
-  return `${photos.length}장 가운데 ${untimed}장은 파일에 시각 기록이 없습니다. 사진에 찍힌 시각 글자가 있으면 다음 단계에서 읽고, 없으면 올라온 차례로 묶습니다(점선 테두리).`;
+  // 직접 적기에서는 글자를 읽는 단계가 없다. 그때는 그렇게 말한다.
+  const head = `${photos.length}장 가운데 ${untimed}장은 파일 속 촬영 시각 기록(EXIF)이 없습니다.`;
+  return willReadText
+    ? `${head} 사진 위에 찍힌 시각 글자는 다음 단계에서 읽습니다. 그것도 없는 장은 올라온 차례로 묶습니다(점선 테두리).`
+    : `${head} 직접 적기는 사진 위 글자를 읽지 않으므로 올라온 차례로 묶습니다(점선 테두리).`;
+}
+
+/**
+ * 시각을 어디서 얻었는지. 사진→글 뒤에 한 번 적고, 열 때의 「기록이 없다」 안내를 이 줄로 바꾼다.
+ * 파일 속 기록(EXIF)과 사진 위에 찍힌 글자는 다른 것이다. 둘을 한 낱말로 부르면 「기록이 없다는데 시각이 찍혀 나온다」가 된다.
+ */
+function timeSourceNote(total: number, fromFile: number, fromText: number, borrowed: number, none: number): string {
+  if (fromFile === total) return `시각: ${total}장 모두 파일 속 촬영 시각 기록(EXIF)에서 읽었습니다.`;
+  const parts = [
+    `파일 속 기록(EXIF) ${fromFile}장`,
+    `사진 위에 찍힌 글자 ${fromText}장(섬네일에 「글자」)`,
+    ...(borrowed > 0 ? [`옆 장에서 빌림 ${borrowed}장(「옆 장」)`] : []),
+    ...(none > 0 ? [`없음 ${none}장(올라온 차례로 묶음, 점선 테두리)`] : []),
+  ];
+  const tail =
+    fromText > 0
+      ? " 파일에 기록이 없어도 사진 위에 찍힌 시각을 읽으면 일지에는 그 시각이 적힙니다."
+      : "";
+  return `시각 출처: ${parts.join(" · ")}.${tail}`;
 }
 
 /** 아래에 잠깐 떴다가 사라지는 알림. 누르면 바로 닫힌다. */
@@ -1739,6 +2192,11 @@ function Toast({ text, onClose }: { text: string; onClose: () => void }) {
 }
 
 const subscribeNothing = () => () => {};
+/** 다음 사진 번호. 검수에서 뺀 장이 있으면 번호에 빈 자리가 생기니 장수로 세지 않는다. */
+function nextIndex(photos: PreparedPhoto[]): number {
+  return photos.reduce((top, photo) => Math.max(top, photo.index + 1), 0);
+}
+
 const onClient = () => true;
 const onServer = () => false;
 

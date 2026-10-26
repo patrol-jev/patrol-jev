@@ -1,6 +1,8 @@
 import { laneLabel, type LaneOrUnknown } from "./lanes";
 import { readReportText } from "./ilji-slots";
 import { splitWork } from "./report";
+import type { PickDoubt } from "./ilji-slots";
+import type { ShotProof } from "./shot-proof";
 
 /**
  * 기간 집계. 한 주 · 한 달 · 아무 기간의 일지를 **한 사람 것끼리** 모은다.
@@ -35,6 +37,10 @@ export interface SavedSpot {
   /** 보관한 사진이 있는가. 기간 보고서의 사진 표는 이 자리 차례대로 붙는다. */
   before: boolean;
   after: boolean;
+  /** 실린 사진의 찍힌 날짜와 그 출처. 날짜를 모르는 장은 null. 이 칸이 생기기 전 기록에는 없다. */
+  shots?: { before: ShotProof | null; after: ShotProof | null };
+  /** 고른 사진 짝에서 사람이 한 번 볼 것(`pickDoubts`). 없으면 비운다. */
+  doubts?: PickDoubt[];
 }
 
 /** 집계가 받는 하루치. 화면의 `DayRecord` 가 이 꼴을 만족한다. */
@@ -180,6 +186,34 @@ export interface CategoryLine extends CategoryRow {
   requested: number | null;
   /** 자체정비 건수. 셀 수 없는 줄이면 null(빈 칸). */
   self: number | null;
+  /** 이 줄의 수 가운데 사진일지에서 온 자리 수. 화면이 출처를 보이는 데 쓴다. */
+  fromLogs: number;
+}
+
+/**
+ * 사진일지 한 건을 집계가 받는 꼴. 순찰 말고 다른 일의 증빙이다.
+ * 항목표의 줄은 그 건에 사람이 정해 둔 것이고 여기서 새로 판단하지 않는다.
+ */
+export interface LogInput {
+  id: string;
+  /** YYYY-MM-DD */
+  date: string;
+  title: string;
+  /** 항목표 줄 번호. 안 정한 건은 null. 사진은 실리지만 숫자로는 안 센다. */
+  row: number | null;
+  /** 자리 수. 항목표에는 이 수가 올라간다. */
+  places: number;
+  /** 정비요청 열에 세는가. 아니면 자체정비. */
+  request: boolean;
+  photos: number;
+}
+
+/** 기간 안의 사진일지 한 건. 보고서 끝 「증빙 사진」의 차례이기도 하다. */
+export interface LogLine extends LogInput {
+  no: number;
+  /** 항목표의 구분 · 내용. 줄을 안 정했으면 빈 문자열. */
+  group: string;
+  item: string;
 }
 
 /** 기능부서 정비요청 세부내역 한 줄. 일지의 말에 통보·신고·요청이 적힌 자리. */
@@ -207,6 +241,18 @@ export interface DetailLine {
   request: boolean;
   pair: boolean;
   hasPhoto: boolean;
+  /** 사람이 한 번 볼 것. 파일에는 적지 않고 화면이 짚는다. */
+  checks: string[];
+}
+
+/** 실린 사진의 날짜를 기간과 견준 수. 날짜는 사진 사본에도 적혀 나간다(`shot-proof.ts`). */
+export interface ProofCount {
+  /** 날짜가 보고 기간 안인 장. */
+  inside: number;
+  /** 날짜가 기간 밖인 장. */
+  outside: number;
+  /** 날짜를 모르는 장. */
+  unknown: number;
 }
 
 export interface PeriodSummary {
@@ -233,6 +279,12 @@ export interface PeriodSummary {
   self: number;
   requests: RequestLine[];
   details: DetailLine[];
+  /** 기간 안의 사진일지 건들, 날짜 차례. */
+  logs: LogLine[];
+  /** 사진일지 가운데 항목표 줄을 안 정한 건 수. 화면이 한 줄 알린다. */
+  logsUnfiled: number;
+  /** 실린 사진 날짜와 기간. 옛 기록(날짜 칸 없음)의 사진은 「모름」에 든다. */
+  proof: ProofCount;
   /** 사람이 일지에 적은 특이사항(날짜 붙여서). */
   etc: Array<{ date: string; text: string }>;
   community: Array<{ date: string; text: string }>;
@@ -251,7 +303,11 @@ function addressKey(address: string): string {
   return address.replace(/\s+/g, "");
 }
 
-export function summarisePeriod(all: DayLike[], period: Period): PeriodSummary {
+/**
+ * `extras` 는 같은 사람의 사진일지 건들이다. 항목표와 총계에 자리 수로 더해지고 `logs` 로 따로 나간다.
+ * 순찰 일수 · 란별 개소 · 일자별 실적은 순찰일지만 센다. 사진일지는 순찰이 아니다.
+ */
+export function summarisePeriod(all: DayLike[], period: Period, extras: LogInput[] = []): PeriodSummary {
   const days = all
     .filter((day) => day.date >= period.from && day.date <= period.to)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -269,6 +325,7 @@ export function summarisePeriod(all: DayLike[], period: Period): PeriodSummary {
   const tally = CATEGORY_ROWS.map(() => ({ requested: 0, self: 0 }));
   const requests: RequestLine[] = [];
   const details: DetailLine[] = [];
+  const proof: ProofCount = { inside: 0, outside: 0, unknown: 0 };
 
   for (const day of days) {
     const read = readReportText(day.report || "");
@@ -335,10 +392,32 @@ export function summarisePeriod(all: DayLike[], period: Period): PeriodSummary {
         request,
         pair: spot.pair,
         hasPhoto: spot.before || spot.after,
+        checks: spotChecks(spot, day.date, period),
       });
+      for (const side of ["before", "after"] as const) {
+        if (!spot[side]) continue;
+        const shot = spot.shots?.[side];
+        if (!shot) proof.unknown += 1;
+        else if (shot.date >= period.from && shot.date <= period.to) proof.inside += 1;
+        else proof.outside += 1;
+      }
     });
     lines.push({ date: day.date, counts: dayCounts, photos: day.photos || 0, legacy: false, etc: dayEtc });
   }
+
+  const fromLogs = CATEGORY_ROWS.map(() => 0);
+  const logs: LogLine[] = extras
+    .filter((log) => log.date >= period.from && log.date <= period.to && log.photos > 0)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id))
+    .map((log, i) => {
+      const row = log.row !== null && CATEGORY_ROWS[log.row] ? log.row : null;
+      if (row !== null) {
+        if (log.request) tally[row].requested += log.places;
+        else tally[row].self += log.places;
+        fromLogs[row] += log.places;
+      }
+      return { ...log, row, no: i + 1, group: row === null ? "" : CATEGORY_ROWS[row].group, item: row === null ? "" : CATEGORY_ROWS[row].item };
+    });
 
   const repeats = [...byAddress.values()]
     .filter((spot) => spot.dates.length >= 2)
@@ -346,8 +425,10 @@ export function summarisePeriod(all: DayLike[], period: Period): PeriodSummary {
 
   const categories: CategoryLine[] = CATEGORY_ROWS.map((row, i) => ({
     ...row,
-    requested: row.countable ? tally[i].requested : null,
-    self: row.countable ? tally[i].self : null,
+    // 사진일지가 채운 줄은 셀 수 있는 줄이 된다. 그 줄의 다른 열은 0 으로 나간다(그 줄을 세었다는 뜻이다).
+    requested: row.countable || fromLogs[i] > 0 ? tally[i].requested : null,
+    self: row.countable || fromLogs[i] > 0 ? tally[i].self : null,
+    fromLogs: fromLogs[i],
   }));
 
   return {
@@ -367,10 +448,44 @@ export function summarisePeriod(all: DayLike[], period: Period): PeriodSummary {
     self: tally.reduce((n, t) => n + t.self, 0),
     requests,
     details,
+    logs,
+    logsUnfiled: logs.filter((log) => log.row === null).length,
+    proof,
     etc,
     community,
     hasLegacy,
   };
+}
+
+/** 길 이름 뒤에 건물번호가 오는 꼴, 또는 동 이름 뒤에 지번이 오는 꼴. 말 칸에 주소를 적었는지 볼 때 쓴다. */
+const ADDRESS_SHAPE = /[가-힣]\d*(?:로|길)\s*\d+(?:-\d+)?\s*$|[가-힣]동\s*\d+(?:-\d+)?\s*$/;
+
+/**
+ * 자리 하나에서 사람이 한 번 볼 것. **세기만 한다.** 고치지 않고, 파일에 적지 않는다. 화면이 내기 전에 짚는다.
+ * 09-01 ~ 09-17 실물 보고서(124자리)에서 사람이 눈으로 찾아야 했던 것들이다.
+ */
+export function spotChecks(spot: SavedSpot, date: string, period: Period): string[] {
+  const out: string[] = [];
+  const address = spot.address.trim();
+  if (!address) out.push("주소 없음");
+  else if (!/[가-힣]/.test(address)) out.push("주소에 길 이름 없음");
+  const work = spot.work.trim();
+  if (work && ADDRESS_SHAPE.test(splitWork(work)[0] ?? "")) out.push("말 칸에 주소로 보이는 글");
+  if (spot.pair) {
+    if (spot.before && !spot.after) out.push("후 사진 없음");
+    if (!spot.before && spot.after) out.push("전 사진 없음");
+  }
+  if (!spot.before && !spot.after) out.push("사진 없음");
+  if (spot.doubts?.includes("swap")) out.push("전·후가 바뀌었을 수 있음");
+  if (spot.doubts?.includes("plate")) out.push("사진 칸에 주소판");
+  for (const side of ["before", "after"] as const) {
+    const shot = spot.shots?.[side];
+    if (!spot[side] || !shot) continue;
+    const name = side === "before" ? "전" : "후";
+    if (shot.date < period.from || shot.date > period.to) out.push(`${name} 사진 날짜가 기간 밖(${shot.date})`);
+    else if (shot.date !== date) out.push(`${name} 사진 날짜가 일지 날짜와 다름(${shot.date})`);
+  }
+  return out;
 }
 
 /** 말을 안 정한 자리의 기본 말. 일지 문장과 같은 뜻으로, 짧게. */
@@ -502,6 +617,15 @@ export function periodText(s: PeriodSummary, dong?: string): string {
   for (const c of filled) {
     const bits = [c.requested ? `정비요청 ${c.requested}` : "", c.self ? `자체정비 ${c.self}` : ""].filter(Boolean);
     out.push(`${H1}${c.group} · ${c.item}: ${bits.join(" · ")}`);
+  }
+
+  if (s.logs.length > 0) {
+    out.push("");
+    out.push("□ 사진일지 (순찰 외 실적 증빙)");
+    for (const log of s.logs) {
+      const filed = log.group ? `${log.group} · ${log.item}` : "항목 미정";
+      out.push(`${H1}${shortDate(log.date)} ${log.title.trim() || "제목 없음"}: ${filed} · ${log.places}개소 · 사진 ${log.photos}장`);
+    }
   }
 
   out.push("");

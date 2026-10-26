@@ -10,7 +10,13 @@
  *
  * 세는 것은 **오늘 몇 장을 읽었는가**뿐이다. 사진도, 주소도, 무엇을 올렸는지도 남기지 않는다.
  * 메모리에만 두므로 서버를 다시 띄우면 0 부터다. 완벽한 방어가 아니라 **사고 방지턱**이다.
+ * 날은 **한국 자정**에 바뀐다(구역 천장과 같은 하루).
+ *
+ * ⚠ 세는 단위가 요청이 온 공인 IP 라, 한 기관 안의 PC 수백 대가 방화벽 뒤에서 IP 하나로 나오면
+ * 그 사람들이 **한 몫을 나눠 쓴다.** 기관에 알릴 때는 한도를 그만큼 크게 두고, 진짜 천장은 키의 잔액으로 잡는다.
  */
+
+import { todayInKorea } from "./korea-day";
 
 interface Used {
   day: string;
@@ -34,10 +40,16 @@ export function hasPass(request: Request): boolean {
   return request.headers.get("x-patrol-pass")?.trim() === pass;
 }
 
-/** 하루에 읽어 줄 장수. 0 이면 한도 없음. */
+/**
+ * 공개 페이지가 하루에 읽어 주는 장수의 천장(2026-09-30, 토큰량 증가로 낮춤).
+ * 환경변수가 이보다 크게 적혀 있어도 이 값에서 멈춘다.
+ */
+export const PUBLIC_DAILY_CAP = 10;
+
+/** 하루에 읽어 줄 장수. 0 이면 한도 없음(환경변수를 안 넣은 곳, 곧 받아서 자기 키로 쓰는 곳). */
 export function demoLimit(): number {
   const raw = Number(process.env.PATROL_DEMO_PHOTOS_PER_DAY ?? "0");
-  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
+  return Number.isFinite(raw) && raw > 0 ? Math.min(Math.floor(raw), PUBLIC_DAILY_CAP) : 0;
 }
 
 /**
@@ -53,7 +65,7 @@ export function takeQuota(
   const limit = demoLimit();
   if (limit === 0 || free) return { ok: true, left: Number.POSITIVE_INFINITY, limit: 0 };
 
-  const day = new Date().toISOString().slice(0, 10);
+  const day = todayInKorea();
   const seen = used.get(who);
   const already = seen && seen.day === day ? seen.photos : 0;
 
@@ -71,7 +83,7 @@ export function leftFor(who: string, free = false): { limit: number; left: numbe
   const limit = demoLimit();
   if (limit === 0 || free) return { limit: 0, left: Number.POSITIVE_INFINITY };
 
-  const day = new Date().toISOString().slice(0, 10);
+  const day = todayInKorea();
   const seen = used.get(who);
   const already = seen && seen.day === day ? seen.photos : 0;
   return { limit, left: Math.max(0, limit - already) };

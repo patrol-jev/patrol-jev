@@ -245,6 +245,61 @@ check("일지 자리: 사진 사본이 없으면 빈 칸으로", slotsFromDay(in
 const ilji = strFromU8(unzipSync(buildIljiHwpx({ dong: "○○동", unit: "", officer: "", dateLabel: "", area: "", rows: { seasonal: [], facility: [], community: [], patrol: [], etc: [] }, photos: [{ caption: "△△로 5", note: "순찰사항", pair: true, before: TINY_JPEG, after: null }] }))["Contents/section0.xml"]);
 check("일지의 사진 표도 같은 꼴(머리·전·후)", ilji.includes("□ △△로 5   ·   순찰사항") && ilji.includes("정비 전") && ilji.includes("정비 후"));
 
+// ── ⑦ 사진 날짜를 사본에 적고 되읽는다. 내기 전에 볼 자리를 센다.
+{
+  const { proofOf, writeShotProof, readShotProof, carryShotProof } = await import("../src/core/shot-proof.ts");
+  const { pickDoubts } = await import("../src/core/ilji-slots.ts");
+  const { spotChecks } = await import("../src/core/period.ts");
+  const { readExifTime } = await import("../src/core/exif-time.ts");
+
+  const proof = proofOf("2026-09-01", "07:31", "text");
+  check("사진에 찍힌 글자에서 읽은 날짜는 stamp 로 적는다", proof?.from === "stamp" && proof.date === "2026-09-01" && proof.time === "07:31", JSON.stringify(proof));
+  check("날짜를 모르면 적을 것이 없다", proofOf("", "07:31", "text") === null && proofOf("2026-09-01", "", null) === null);
+  const tagged = writeShotProof(TINY_JPEG, proof);
+  check("적은 사본은 여전히 JPEG 이고 날짜 칸이 맨 앞에 붙는다", tagged[0] === 0xff && tagged[1] === 0xd8 && tagged[2] === 0xff && tagged[3] === 0xe1 && tagged.length > TINY_JPEG.length);
+  check("되읽으면 같은 날짜 · 시각 · 출처", JSON.stringify(readShotProof(tagged)) === JSON.stringify(proof), JSON.stringify(readShotProof(tagged)));
+  const general = readExifTime(tagged);
+  check("남의 도구가 읽는 촬영 시각 칸으로도 읽힌다", general?.date === "2026-09-01" && general?.time === "07:31", JSON.stringify(general));
+  check("두 번 적어도 칸은 하나", writeShotProof(tagged, proof).length === tagged.length);
+  const dateOnly = readShotProof(writeShotProof(TINY_JPEG, proofOf("2026-09-02", "", "neighbor")));
+  check("시각을 모르면 날짜만", dateOnly?.time === "" && dateOnly?.from === "neighbor" && dateOnly?.date === "2026-09-02", JSON.stringify(dateOnly));
+  check("null 을 적으면 칸을 걷어 낸다", readShotProof(writeShotProof(tagged, null)) === null && writeShotProof(tagged, null).length === TINY_JPEG.length);
+  check("다시 자른 사본에 옮겨 적는다", JSON.stringify(readShotProof(carryShotProof(tagged, TINY_JPEG))) === JSON.stringify(proof) && carryShotProof(TINY_JPEG, TINY_JPEG) === TINY_JPEG);
+  check("적힌 것이 없는 사진은 null", readShotProof(TINY_JPEG) === null);
+
+  const g = { id: "g", photos: [1, 2], address: "", lane: "waste_cleanup", edited: false, time: "" };
+  const sc = (map) => (i, stage) => map[i]?.[stage] ?? 0;
+  const noPlate = () => false;
+  check("판정이 전·후를 거꾸로 본 짝은 알린다", pickDoubts(g, { before: 1, after: 2, pair: true }, noPlate, sc({ 1: { after: 0.71 }, 2: { before: 0.95 } })).join() === "swap");
+  check("한쪽만 어긋나면 알리지 않는다(둘 다 전으로 본 짝은 흔하다)", pickDoubts(g, { before: 1, after: 2, pair: true }, noPlate, sc({ 1: { before: 0.9 }, 2: { before: 0.9 } })).length === 0);
+  check("사진 칸에 주소판이 실리면 알린다", pickDoubts(g, { before: 1, after: null, pair: true }, (i) => i === 1, sc({})).join() === "plate");
+  check("사람이 쓰임을 정한 장은 묻지 않는다", pickDoubts({ ...g, roles: { 1: "before", 2: "after" } }, { before: 1, after: 2, pair: true }, (i) => i === 1, sc({ 1: { after: 0.9 }, 2: { before: 0.9 } })).length === 0);
+
+  const per = customPeriod("2026-09-01", "2026-09-17");
+  const base = { address: "○○로1길 3", lane: "waste_cleanup", work: "", time: "", pair: true, before: true, after: true };
+  check("멀쩡한 자리는 볼 것이 없다", spotChecks(base, "2026-09-01", per).length === 0);
+  check("주소 없음", spotChecks({ ...base, address: " " }, "2026-09-01", per).join() === "주소 없음");
+  check("건물번호뿐인 주소", spotChecks({ ...base, address: "9-1" }, "2026-09-01", per).join() === "주소에 길 이름 없음");
+  check("말 칸에 적힌 주소(길 · 지번)", spotChecks({ ...base, work: "○○로2가길 45" }, "2026-09-01", per).join() === "말 칸에 주소로 보이는 글" && spotChecks({ ...base, work: "가나동 45-62" }, "2026-09-01", per).join() === "말 칸에 주소로 보이는 글");
+  check("보통 말은 주소로 안 본다", spotChecks({ ...base, work: "폐기물 처리 및 수거, ※ 통보" }, "2026-09-01", per).length === 0 && spotChecks({ ...base, work: "도로 3개소 정비" }, "2026-09-01", per).length === 0);
+  check("짝의 한쪽이 빈 자리", spotChecks({ ...base, before: false }, "2026-09-01", per).join() === "전 사진 없음" && spotChecks({ ...base, after: false }, "2026-09-01", per).join() === "후 사진 없음");
+  check("확인 사진 란은 한 장이어도 된다", spotChecks({ ...base, lane: "risk_facility", pair: false, after: false }, "2026-09-01", per).length === 0);
+  const shot = (date) => ({ date, time: "09:00", from: "stamp" });
+  check("사진 날짜가 기간 밖", spotChecks({ ...base, shots: { before: shot("2026-08-08"), after: shot("2026-09-01") } }, "2026-09-01", per).join() === "전 사진 날짜가 기간 밖(2026-08-08)");
+  check("사진 날짜가 일지 날짜와 다름", spotChecks({ ...base, shots: { before: shot("2026-09-01"), after: shot("2026-09-02") } }, "2026-09-01", per).join() === "후 사진 날짜가 일지 날짜와 다름(2026-09-02)");
+  check("짝 의심은 그대로 옮긴다", spotChecks({ ...base, doubts: ["swap", "plate"] }, "2026-09-01", per).join() === "전·후가 바뀌었을 수 있음,사진 칸에 주소판");
+
+  const sum = summarisePeriod(
+    [
+      { date: "2026-09-01", dong: "○○동", photos: 4, groups: 2, report: "", spots: [{ ...base, shots: { before: shot("2026-09-01"), after: shot("2026-10-18") } }, { ...base, address: "", after: false, shots: { before: null, after: null } }] },
+      { date: "2026-09-02", dong: "○○동", photos: 2, groups: 1, report: "", spots: [base] },
+    ],
+    per,
+  );
+  check("사진 날짜 셈: 기간 안 1 · 밖 1 · 모름 3", sum.proof.inside === 1 && sum.proof.outside === 1 && sum.proof.unknown === 3, JSON.stringify(sum.proof));
+  check("세부내역 줄마다 볼 것이 붙는다", sum.details[0].checks.length === 1 && sum.details[1].checks.join() === "주소 없음,후 사진 없음" && sum.details[2].checks.length === 0, JSON.stringify(sum.details.map((d) => d.checks)));
+}
+
 console.log("");
 if (problems.length > 0) {
   console.log(`${problems.length}건 실패 / ${checked}건`);

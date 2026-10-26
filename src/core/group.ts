@@ -13,6 +13,9 @@ import type { Described, Group, Judged } from "./types";
  *   ② **주소판**: 주소판이 자리의 경계다. 그 사람이 주소판을 자리 앞에 찍는지 뒤에 찍는지는
  *      그날 사진이 알려 준다(`wherePlate`). Jev 가 전·후 작업 사진이라고 분명히 본 장은
  *      글자가 읽혔어도 주소판으로 치지 않는다(`isWorkShot`).
+ *      뒤에 찍는 사람이라도 **앞이 비어 있는 주소판**(그날 첫 장이거나 걸어온 뒤 첫 장)은 그 자리의
+ *      앞이다(`openLeadingPlates`). 주소판 바로 다음의 「후」 한 장은 그 자리에 남기고 거기서 자리를
+ *      닫는다(`keepAfterShotWithPlate`).
  *   ②-2 **갈래**: 이어 오던 자리의 갈래와 이 장의 갈래가 **둘 다 문턱 위로** 다르면 끊는다.
  *      주소판과 같은 급이고 시각보다는 약하다. 그늘막(계절특수)은 지나가며 한 장씩 찍는데,
  *      직전 청소 자리와 2분 안이면 ③ 의 시각 잇기가 그 자리에 붙여 버렸다(`laneCuts`).
@@ -51,7 +54,7 @@ export function buildGroups(
   demoteTwinPlates(plateAt, indices, byIndex, stamps, thresholds);
   const plates = new Set(indices.filter((_, i) => plateAt[i]));
 
-  const role = wherePlate(plateAt, indices.map((index) => stamps[index] ?? null));
+  const role = wherePlate(plateAt, indices.map((index) => stamps[index] ?? null), thresholds.sameMinutes);
   const byPlate = plateCuts(plateAt, role);
 
   // ① 시각이 크게 벌어진 자리. 주소판보다 세다. 같은 주소판 앞이어도 두 시간 벌어졌으면
@@ -66,10 +69,18 @@ export function buildGroups(
     return gap < 0 || gap > splitMinutesOf(thresholds);
   });
 
-  // ② 보탬: 뒤에 찍는 사람이라도 주소판 **바로 다음**의 분명한 「후」 사진은 그 자리의 것이다(전 → 주소판 → 후 로 찍는 자리).
-  //    09-26 실물(66장): 그런 자리 셋이 주소판 뒤에서 잘려 「후」 한 장이 낱장이 되거나 다음 자리에 붙었다.
-  //    같은 분 안(sameMinutes)이고, 그 자리에 아직 분명한 「후」가 없을 때만. 「전」이 오면 종전대로 새 자리다.
-  if (role === "trailing") keepAfterShotWithPlate(byPlate, byTime, indices, byIndex, stamps, thresholds);
+  // ①-2 시각이 벌어졌어도 Jev 가 「같은 자리」를 확실히 말하는 「후」는 그 자리의 것이다(`healWorkGap`).
+  healWorkGap(byTime, plateAt, indices, byIndex, stamps, thresholds);
+
+  // ② 보탬 둘. 뒤에 찍는 사람의 주소판 경계를 그날 사진이 말하는 대로 손본다.
+  //    - 앞이 비어 있는 주소판은 그 자리의 앞이다(`openLeadingPlates`). 뒤에서 끊지 않는다.
+  //    - 주소판 **바로 다음**의 「후」 한 장은 그 자리의 것이다(전 → 주소판 → 후 로 찍는 자리). 09-26 실물(66장):
+  //      그런 자리 셋이 주소판 뒤에서 잘려 「후」 한 장이 낱장이 되거나 다음 자리에 붙었다. 같은 분 안(sameMinutes)이고,
+  //      그 자리에 아직 분명한 「후」가 없을 때만. 남긴 뒤에는 그 자리를 거기서 닫는다. 「전」이 오면 종전대로 새 자리다.
+  if (role === "trailing") {
+    openLeadingPlates(plateAt, byPlate, byTime, indices, stamps, thresholds);
+    keepAfterShotWithPlate(plateAt, byPlate, byTime, indices, byIndex, stamps, thresholds, described);
+  }
 
   // ②-2 갈래가 갈리는 자리. 주소판이 없어도 청소 자리에 점검 사진이 붙지 않게.
   const byLane = laneCuts(indices, plateAt, byIndex, thresholds, (i) => byTime[i] || byPlate[i]);
@@ -187,8 +198,20 @@ export function lineUp<T extends { index: number }>(
  * 표는 **한쪽이 분명히 더 벌어졌을 때만**(큰 쪽이 작은 쪽의 두 배 하고도 1분 이상) 낸다. 치우는 데 2분,
  * 걸어가는 데 1분이면 간격만으로는 어느 쪽도 못 정한다. 그런 주소판은 표를 안 내고, 표가 하나도 없거나
  * 같으면 양 끝 장수 규칙으로 돌아간다.
+ *
+ * 그리고 **양쪽이 다 같은 자리 안(`sameMinutes`)이면 표를 안 낸다.** 시각은 분까지라 1분 대 0분은 초 단위
+ * 우연이지 걸어간 자국이 아니다. 「전 → 주소판 → 후」로 찍는 사람은 주소판 앞이 1분, 뒤가 0분인 자리가
+ * 줄을 잇는데, 그 1분이 「앞이 더 벌어졌다」로 세어져 「앞」이 됐다(09-07 실물 31장, 열 자리 가운데 다섯이
+ * 그렇게 표를 냈고 걸어간 자국이 든 표는 「뒤」 하나뿐이었다). 「앞」으로 읽으면 주소판 앞에서 끊겨
+ * 자리마다 「전」이 낱장으로 떨어지고 주소판은 다음 자리 것이 됐다. 그 사람은 「뒤」로 읽어야 주소판 뒤의
+ * 「후」를 그 자리에 남기는 규칙(`keepAfterShotWithPlate`)이 든다.
  */
-export function wherePlate(plateAt: boolean[], stamps: Array<ShotStamp | null> = []): "leading" | "trailing" {
+export function wherePlate(
+  plateAt: boolean[],
+  stamps: Array<ShotStamp | null> = [],
+  /** 이 분 안은 한 자리 안이다(`thresholds.sameMinutes`). 양쪽이 다 이 안이면 그 주소판은 표를 안 낸다. */
+  sameMinutes = 0,
+): "leading" | "trailing" {
   const first = plateAt.indexOf(true);
   if (first < 0) return "trailing";
   const last = plateAt.lastIndexOf(true);
@@ -200,6 +223,7 @@ export function wherePlate(plateAt: boolean[], stamps: Array<ShotStamp | null> =
     const before = i > 0 ? minutesBetween(stamps[i - 1] ?? null, stamps[i] ?? null) : null;
     const after = i < plateAt.length - 1 ? minutesBetween(stamps[i] ?? null, stamps[i + 1] ?? null) : null;
     if (before === null || after === null || before < 0 || after < 0) continue;
+    if (Math.max(before, after) <= Math.max(0, sameMinutes)) continue;
     if (Math.max(before, after) < 2 * Math.min(before, after) + 1) continue;
     if (after > before) trailing++;
     else leading++;
@@ -252,45 +276,146 @@ function rhythmOf(
 }
 
 /**
- * 뒤에 찍는 사람의 주소판 경계 가운데, 바로 뒤가 분명한 「후」 사진이면 그 경계를 거둔다(`buildGroups` ② 보탬).
- * 조건 셋: 앞 장과 같은 분 안 · 이 장이 「후」이고 「전」은 분명히 아님 · 이 자리(직전 경계 뒤)에 아직 그런 「후」가 없음.
+ * 뒤에 찍는 사람인데 **앞이 비어 있는 주소판**. 그 주소판은 이번 자리의 앞이다(`buildGroups` ② 보탬).
+ *
+ * 뒤에 찍는 주소판 앞에는 늘 그 자리의 작업 사진이 붙어 있다. 그날 첫 장이 주소판이거나, 걸어온 뒤(시각 경계 ①)
+ * 첫 장이 주소판이면 앞에 붙일 작업 사진이 없다. 그 사람이 그 자리만은 주소판을 먼저 찍은 것이다.
+ * 09-27 실물(63장, 뒤에 찍는 사람): 그런 자리가 둘(첫 자리 · 두 시간 쉬고 온 첫 자리). 뒤에서 끊으니 주소판이 혼자 남고
+ * 그 자리의 두 장이 다음 자리에 붙어 남의 주소를 받았다.
+ *
+ * 바로 다음 장이 같은 분 안(sameMinutes)이고 주소판이 아닐 때만. 다음 장이 멀면 정말 주소판 한 장만 찍은 자리다.
+ * 시각을 모르는 장은 안 건드린다.
+ */
+function openLeadingPlates(
+  plateAt: boolean[],
+  byPlate: boolean[],
+  byTime: boolean[],
+  indices: number[],
+  stamps: Record<number, ShotStamp | null>,
+  thresholds: Thresholds,
+): void {
+  if (thresholds.sameMinutes <= 0) return;
+  for (let i = 0; i + 1 < indices.length; i++) {
+    if (!plateAt[i] || plateAt[i + 1]) continue;
+    if (i !== 0 && !byTime[i]) continue;
+    const gap = minutesBetween(stamps[indices[i]], stamps[indices[i + 1]]);
+    if (gap === null || gap < 0 || gap > thresholds.sameMinutes) continue;
+    byPlate[i + 1] = false;
+  }
+}
+
+/**
+ * 뒤에 찍는 사람의 주소판 경계 가운데, 바로 뒤가 「후」 사진이면 그 경계를 거두고 **그 장 뒤에서 자리를 닫는다**(`buildGroups` ② 보탬).
+ * 조건 셋: 앞 장과 같은 분 안 · 이 장이 「전」은 분명히 아님 · 이 자리(직전 경계 뒤)에 아직 분명한 「후」가 없음.
  * 시각을 모르는 장은 안 건드린다. 어느 자리 것인지 알 길이 없다.
+ *
+ * 「전」이 아니면 된다. 자리를 새로 여는 것은 「전」이다. 09-26 실물에서는 그런 장이 「후」 0.6~0.75 로 나왔고,
+ * 09-27 실물(63장)에서는 치운 뒤 빈 길을 찍은 두 장이 「해당 없음」 0.59·0.89 로 나왔다(「전」 0.01·0.00). 둘 다 그 자리의 끝 장이다.
+ * 다만 갈래를 문턱 위로 말하는 **확인 사진**(그늘막·배수구·위험시설물, 「해당 없음」 확신 `workShot` 이상)과 그늘막 말이 든 장은
+ * 지나가며 찍은 다른 자리다. 그 장은 남기지 않는다. **그 갈래가 이 자리의 갈래와 같으면** 다른 자리가 아니다(09-15 실물:
+ * 청소 자리의 주소판 뒤에 찍은 CCTV 안내판 장이 「해당 없음」 0.89 · 순찰사항 0.68 로 나와 낱장이 됐다).
+ *
+ * 남긴 뒤 **닫는다**: 그 다음 장 앞에서 끊는다(시각이 이미 끊었으면 그대로). 09-27 실물: 안 닫으니 남긴 「후」 뒤로 다음 자리의
+ * 주소판(뒤에 찍는 사람이라 뒤에서 끊김)과 시각 없는 두 장이 같은 자리에 딸려 들어왔다.
  */
 function keepAfterShotWithPlate(
+  plateAt: boolean[],
   byPlate: boolean[],
   byTime: boolean[],
   indices: number[],
   byIndex: Map<number, Judged>,
   stamps: Record<number, ShotStamp | null>,
   thresholds: Thresholds,
+  described: Described[],
 ): void {
-  // 「후」로 나왔고 「전」일 확률이 문턱의 나머지(0.2) 아래면 된다. 이런 장은 후·해당없음 사이에서 흔들려
-  // 「후」 확신이 0.6~0.75 에 그치는데(09-26 실물 넷 전부), 자리를 새로 여는 것은 「전」이니 그것만 아니면 된다.
   const notBefore = 1 - workShotOf(thresholds);
+  const sure = workShotOf(thresholds);
+  /** 분명한 「후」. 자리에 이미 이런 장이 있으면 다음 「후」는 남의 것이다. */
   const isAfter = (i: number) => {
     const judgment = byIndex.get(indices[i]);
     return judgment?.stage === "after" && (judgment.stageProbabilities?.before ?? 1) <= notBefore;
   };
+  /** 이 장이 문턱 위로 말하는 갈래. 주소판은 갈래를 말하지 않는다. */
+  const laneOf = (i: number) => (plateAt[i] ? null : sureLane(byIndex.get(indices[i]), thresholds));
+  /** 주소판 다음에 남길 수 있는 장. 주소판도 「전」도 (다른 갈래의) 확인 사진도 그늘막도 아닌 것. */
+  const isTail = (i: number, pieceLane: Lane | null) => {
+    if (plateAt[i]) return false;
+    const judgment = byIndex.get(indices[i]);
+    if (!judgment || judgment.stage === "before") return false;
+    if ((judgment.stageProbabilities?.before ?? 1) > notBefore) return false;
+    const check =
+      judgment.stage === "not_applicable" && (judgment.stageProbabilities?.not_applicable ?? 0) >= sure;
+    const lane = sureLane(judgment, thresholds);
+    if (check && lane && lane !== pieceLane) return false;
+    return !isShadeSpot([indices[i]], described);
+  };
   let pieceHasAfter = false;
+  let pieceLane: Lane | null = null;
   for (let i = 0; i < indices.length; i++) {
     if (i === 0 || byTime[i]) {
       pieceHasAfter = isAfter(i);
+      pieceLane = laneOf(i);
       continue;
     }
     if (byPlate[i]) {
       const gap = minutesBetween(stamps[indices[i - 1]], stamps[indices[i]]);
       const close = thresholds.sameMinutes > 0 && gap !== null && gap >= 0 && gap <= thresholds.sameMinutes;
-      if (close && !pieceHasAfter && isAfter(i)) {
+      if (close && !pieceHasAfter && isTail(i, pieceLane)) {
         byPlate[i] = false;
+        if (i + 1 < indices.length && !byTime[i + 1]) byPlate[i + 1] = true;
         pieceHasAfter = true;
         continue;
       }
       pieceHasAfter = isAfter(i);
+      pieceLane = laneOf(i);
       continue;
     }
     if (isAfter(i)) pieceHasAfter = true;
+    if (!pieceLane) pieceLane = laneOf(i);
   }
 }
+
+/**
+ * 시각 규칙 ① 이 그은 선 가운데, **치우는 데 걸린 시간**이 만든 선을 거둔다.
+ *
+ * 걸어서 다음 자리로 가는 데 5분이면 넉넉하지만, 한 자리를 치우는 데는 그보다 오래 걸릴 수 있다.
+ * 09-15 실물: 주차 공간의 낙엽을 찍고(10:23) 치운 뒤(10:35) 주소판. 12분이 벌어져 「전」이 낱장이 됐다.
+ * 그 「후」 장에 Jev 는 「앞과 같은 자리」 0.89 를 줬다. 두 회차 93장에서 그 값이 0.85 를 넘은 짝은 7/7 이
+ * 정답에서도 같은 자리였고, 5분 넘게 벌어진 다른 자리 짝 13개는 전부 0.37 아래였다. 그 사이가 넓어 믿는다.
+ *
+ * 조건 넷: 이 장이 분명한 「후」 · 같은자리 확률이 `SURE_SAME` 이상 · 간격이 치우는 시간 안(`splitMinutes` 의 네 배) ·
+ * 앞 덩이(직전 선부터 이 장 앞까지)에 주소판이 없음(주소판이 있으면 그 자리는 이미 닫힌 것이다).
+ * 시각을 모르는 장은 안 건드린다.
+ */
+function healWorkGap(
+  byTime: boolean[],
+  plateAt: boolean[],
+  indices: number[],
+  byIndex: Map<number, Judged>,
+  stamps: Record<number, ShotStamp | null>,
+  thresholds: Thresholds,
+): void {
+  const sure = workShotOf(thresholds);
+  const workMinutes = splitMinutesOf(thresholds) * 4;
+  let pieceStart = 0;
+  for (let i = 1; i < indices.length; i++) {
+    if (!byTime[i]) continue;
+    const gap = minutesBetween(stamps[indices[i - 1]], stamps[indices[i]]);
+    const judgment = byIndex.get(indices[i]);
+    const after = judgment?.stage === "after" && (judgment.stageProbabilities?.after ?? 0) >= sure;
+    const same = (judgment?.sameLocation ?? 0) >= SURE_SAME;
+    let plateInPiece = false;
+    for (let k = pieceStart; k < i; k++) if (plateAt[k]) plateInPiece = true;
+    if (gap !== null && gap > 0 && gap <= workMinutes && !plateAt[i] && after && same && !plateInPiece) {
+      byTime[i] = false;
+      continue;
+    }
+    pieceStart = i;
+  }
+}
+
+/** 이 값부터는 「앞과 같은 자리」를 시각보다 믿는다(`healWorkGap`). 실측 근거는 그 함수 주석에. */
+const SURE_SAME = 0.85;
 
 /** 주소판이 정하는 경계. 앞에 찍는 사람이면 주소판 **앞에서**, 뒤에 찍는 사람이면 주소판 **뒤에서** 끊는다. */
 function plateCuts(plateAt: boolean[], role: "leading" | "trailing"): boolean[] {
@@ -434,18 +559,16 @@ function splitSegment(
 ): number[][] {
   if (segment.some((i) => ctx.plateAt[i])) {
     if (segment.length <= ctx.rhythm.limit) return [segment];
-    const size = Math.max(1, ctx.rhythm.size);
 
-    // 주소판이 있는 쪽부터 끊는다. 주소판이 든 조각만 주소를 갖고, 나머지는 빈칸으로 남는다.
-    const chunks: number[][] = [];
-    if (ctx.role === "leading") {
-      for (let at = 0; at < segment.length; at += size) chunks.push(segment.slice(at, at + size));
-    } else {
-      for (let end = segment.length; end > 0; end -= size) {
-        chunks.unshift(segment.slice(Math.max(0, end - size), end));
-      }
+    // 먼저 **자리가 열리는 장**에서 끊는다. 분명한 「후」 뒤에 오는 분명한 「전」이나 표지 사진이 그것이다(`openerCuts`).
+    // 그래도 긴 조각은 주소판이 든 것만 리듬으로 자른다. 주소판 없는 조각은 자리가 열린 곳부터 끝까지가 한 자리다.
+    const opened = openerCuts(segment, ctx);
+    if (opened.length > 1) {
+      return opened.flatMap((piece) =>
+        piece.some((i) => ctx.plateAt[i]) && piece.length > ctx.rhythm.limit ? chunkByRhythm(piece, ctx) : [piece],
+      );
     }
-    return chunks;
+    return chunkByRhythm(segment, ctx);
   }
 
   const pieces: number[][] = [];
@@ -477,6 +600,62 @@ function splitSegment(
   }
   if (current.length > 0) pieces.push(current);
 
+  return pieces;
+}
+
+/**
+ * 주소판이 든 긴 덩이를 **리듬 길이로 기계적으로** 자른다. 주소판이 있는 쪽부터 끊어 주소판이 든 조각만 주소를 갖고,
+ * 나머지는 빈칸으로 남는다. 자리가 열리는 장을 못 찾았을 때의 마지막 수단이다.
+ */
+function chunkByRhythm(segment: number[], ctx: { plateAt: boolean[]; role: "leading" | "trailing"; rhythm: { size: number } }): number[][] {
+  const size = Math.max(1, ctx.rhythm.size);
+  const chunks: number[][] = [];
+  if (ctx.role === "leading") {
+    for (let at = 0; at < segment.length; at += size) chunks.push(segment.slice(at, at + size));
+  } else {
+    for (let end = segment.length; end > 0; end -= size) {
+      chunks.unshift(segment.slice(Math.max(0, end - size), end));
+    }
+  }
+  return chunks;
+}
+
+/**
+ * 주소판이 든 긴 덩이 안에서 **자리가 열리는 장** 앞에서 끊는다.
+ *
+ * 한 자리는 「(주소판) 전 … 후」 꼴이다. 분명한 「후」가 이미 나온 뒤에 분명한 「전」이 오거나, 주소판은 아니지만
+ * 「해당 없음」이 분명한 표지 사진(건물 이름판·안내판·확인 사진)이 오면 거기서 다음 자리가 열린 것이다.
+ * 「전」 뒤에는 늘 「후」가 오고, 「후」 뒤에 오는 「전」은 남의 것이다.
+ *
+ * 09-28 실물(22장, 앞에 찍는 사람): 주소판 자리(주소판·전·후)를 끝내고 1분 만에 다음 자리에 닿아 주소판 대신 건물 표지판을
+ * 찍고 전·전·후를 찍었다. 시각(5분 안)도 주소판(없음)도 못 끊어 일곱 장이 한 덩이가 됐고, 리듬(3장)으로 자르니
+ * [주소판·전·후][표지·전·전][후] 로 마지막 「후」가 낱장이 됐다. 열리는 장(표지)에서 끊으면 [주소판·전·후][표지·전·전·후] 다.
+ *
+ * 문턱은 `workShot` 이다. 그 아래 확신은 아무 말도 안 한 것으로 본다. 확인 사진의 「해당 없음」 0.59~0.78(09-27 실물)은
+ * 그 자리의 끝 장일 수 있어 안 끊는다. 아무 데도 못 끊으면 덩이 하나를 그대로 돌려준다.
+ */
+function openerCuts(
+  segment: number[],
+  ctx: { plateAt: boolean[]; indices: number[]; byIndex: Map<number, Judged>; thresholds: Thresholds },
+): number[][] {
+  const sure = workShotOf(ctx.thresholds);
+  const pieces: number[][] = [];
+  let current: number[] = [];
+  let closed = false;
+  for (const [at, i] of segment.entries()) {
+    const judgment = ctx.byIndex.get(ctx.indices[i]);
+    const stage = judgment?.stage;
+    const confidence = stage ? (judgment?.stageProbabilities?.[stage] ?? 0) : 0;
+    const opener = !ctx.plateAt[i] && confidence >= sure && (stage === "before" || stage === "not_applicable");
+    if (at > 0 && closed && opener) {
+      pieces.push(current);
+      current = [];
+      closed = false;
+    }
+    current.push(i);
+    if (!ctx.plateAt[i] && stage === "after" && confidence >= sure) closed = true;
+  }
+  if (current.length > 0) pieces.push(current);
   return pieces;
 }
 

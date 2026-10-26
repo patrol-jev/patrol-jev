@@ -15,11 +15,12 @@ npm install && cp .env.example .env.local   # 키 두 개를 넣습니다
 npm run dev                                 # http://localhost:3000
 ```
 
-키는 둘입니다. [OpenAI](https://platform.openai.com)가 사진을 글로 옮기고,
+키는 둘입니다. [Claude](https://console.anthropic.com) 또는 [OpenAI](https://platform.openai.com)가 사진을 글로 옮기고(둘 중 하나면 됩니다. 둘 다 있으면 Claude 가 먼저),
 [Jev](https://console.typesafe.ai)가 그 글을 네 갈래 중 하나로 가릅니다. 묶기와 문장은 코드가 합니다.
 
 **키가 없어도 씁니다.** 「우리 동」 옆의 「수동 전환」을 누르면 모델을 한 번도 안 부릅니다(키가 없으면 처음부터 이 길입니다).
 사진이 이 브라우저를 벗어나지 않고, 비용도 0 입니다. 묶기·시각·일지 문장은 그대로 나옵니다.
 개인정보를 다루지 않습니다. 계정도 데이터베이스도 없고, 기록은 그 컴퓨터에만 남습니다. MIT.
+
 
 어떻게 도는지, 본인 동에 맞추는 법, 속도와 정확도 실측은 **[docs/guide.md](docs/guide.md)** 에 있습니다.

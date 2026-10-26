@@ -5,7 +5,7 @@
 import { HUMAN_CHOICES, laneLabel, type LaneOrUnknown, type Thresholds } from "@/core/lanes";
 import { useState } from "react";
 import { decideLane, decidingJudgment } from "@/core/group";
-import type { Described, Group, Judged } from "@/core/types";
+import type { Described, Group, Judged, PhotoRole } from "@/core/types";
 import type { PreparedPhoto } from "./photo";
 import { Thumb } from "./thumb";
 import { ChoiceBar, Chip, Ms, NoulRow } from "./jev";
@@ -36,6 +36,8 @@ export function GroupCard({
   onMovePick,
   onMoveHere,
   onRemove,
+  pick,
+  onRole,
 }: {
   group: Group;
   order: number;
@@ -61,6 +63,10 @@ export function GroupCard({
   onMoveHere: () => void;
   /** 이 자리를 목록에서 뺀다. 사진은 남되 어느 자리에도 안 들어가고, 일지에도 안 실린다. */
   onRemove: () => void;
+  /** 지금 이 자리의 전 칸·후 칸에 실리는 장. 일지에 안 실리는 자리면 null. */
+  pick: { before: number | null; after: number | null } | null;
+  /** 한 장의 쓰임을 사람이 정한다. null 이면 정한 것을 지우고 판정에 맡긴다. */
+  onRole: (photoIndex: number, role: PhotoRole | null) => void;
 }) {
   const byIndex = new Map(Object.values(judged).map((j) => [j.index, j]));
   // 지우기는 두 번 누른다(지난 날짜 지우기와 같은 결). 창을 띄우지 않고 단추 글자가 바뀐다.
@@ -121,6 +127,15 @@ export function GroupCard({
           </span>
         )}
 
+        {group.gpsMeters !== undefined && !group.edited && (
+          <span
+            className="rounded px-1.5 py-0.5 text-[10px]"
+            style={{ background: "var(--wash)", color: "var(--muted)" }}
+            title="사진의 찍힌 자리에서 가장 가까운 건물 출입구입니다. 이 브라우저 안에서 맞췄습니다. 틀리면 고치세요."
+          >
+            위치 · {group.gpsMeters}m
+          </span>
+        )}
         {group.edited && (
           <span
             className="rounded px-1.5 py-0.5 text-[10px]"
@@ -280,6 +295,9 @@ export function GroupCard({
               thresholds={thresholds}
               canSplit={position > 0}
               onSplit={() => onSplitAt(index)}
+              used={pick ? (pick.before === index ? "before" : pick.after === index ? "after" : "none") : null}
+              role={group.roles?.[index] ?? null}
+              onRole={(role) => onRole(index, role)}
             />
           ))}
         </div>
@@ -295,6 +313,9 @@ function PhotoRow({
   thresholds,
   canSplit,
   onSplit,
+  used,
+  role,
+  onRole,
 }: {
   photo?: PreparedPhoto;
   described?: Described;
@@ -302,7 +323,17 @@ function PhotoRow({
   thresholds: Thresholds;
   canSplit: boolean;
   onSplit: () => void;
+  /** 지금 일지의 어느 칸에 실리나. 일지에 안 실리는 자리면 null. */
+  used: "before" | "after" | "none" | null;
+  /** 사람이 정해 둔 쓰임. 안 정했으면 null. */
+  role: PhotoRole | null;
+  onRole: (role: PhotoRole | null) => void;
 }) {
+  const ROLES: Array<{ role: PhotoRole; label: string }> = [
+    { role: "before", label: "전" },
+    { role: "after", label: "후" },
+    { role: "skip", label: "빼기" },
+  ];
   return (
     <div className="flex gap-3 rounded-lg p-2" style={{ background: "var(--wash)" }}>
       {photo && (
@@ -355,6 +386,31 @@ function PhotoRow({
           </>
         ) : (
           <div className="h-2 w-2/3 rounded-full waiting" />
+        )}
+
+        {used !== null && (
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+            <span className="text-[var(--muted)]">일지 사진</span>
+            <b>{{ before: "전 칸", after: "후 칸", none: "안 실림" }[used]}</b>
+            <span className="text-[var(--muted)]">{role ? "· 직접 정함" : "· 자동"}</span>
+            <span className="ml-auto flex items-center gap-1">
+              {ROLES.map((one) => (
+                <button
+                  key={one.role}
+                  type="button"
+                  onClick={() => onRole(role === one.role ? null : one.role)}
+                  className="rounded px-1.5 py-0.5"
+                  style={{
+                    border: "1px solid var(--line)",
+                    background: role === one.role ? "var(--ink)" : "var(--paper)",
+                    color: role === one.role ? "var(--paper)" : "var(--muted)",
+                  }}
+                >
+                  {one.label}
+                </button>
+              ))}
+            </span>
+          </div>
         )}
 
         {canSplit && (

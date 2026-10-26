@@ -23,6 +23,11 @@ export interface RoadIndex {
   source: string;
   /** 도로명 → 그 도로에 있는 건물번호("94" · "30-16"). */
   buildings: Record<string, string[]>;
+  /**
+   * 건물 출입구 좌표. [x, y, "도로명 번호"] 의 목록, UTM-K(EPSG:5179) 미터 정수.
+   * 위치정보요약DB(entrc_*.txt)를 같이 두고 색인을 만들었을 때만 있다.
+   */
+  points?: [number, number, string][];
 }
 
 export interface AddressReading {
@@ -99,6 +104,51 @@ export function readAddress(raw: string, index: RoadIndex | null): AddressReadin
     base.exists = index.buildings[road].includes(parsed.building);
   }
   return base;
+}
+
+/**
+ * 주소판 글자를 못 받았을 때, 사진에서 옮겨 적은 글 전체(`text_in_photo`)에서 주소판 꼴을 **대조로** 찾는다.
+ *
+ * 모델은 주소판이 프레임에 있어도 `sign_text` 를 비우는 날이 있다(09-27 실물 63장 가운데 한 장: 글에는
+ * 「13 / ○○로57길 / 로마자」 세 줄이 그대로 있었다). 그 장은 주소판이 아니게 되어 자리의 주소 칸이 빈다.
+ * 파란 표준판이 아닌 판도 있다. 건물 이름판에 지번과 도로명 주소를 한 줄씩 새긴 것(「○○로 108」)이 그렇다.
+ * 모델 지시문은 그런 판을 주소판으로 안 치므로 여기서 잡는다.
+ *
+ * 여기에는 짐작이 없다. 규칙은 이렇다.
+ *   - 색인이 없으면 아무것도 안 한다. 그 동의 도로명과 맞춰 볼 수 없으면 읽지 않는다.
+ *   - 두 줄 꼴: 한 줄이 **그 동의 도로명 그대로**(띄어쓰기만 무시)이고, 앞뒤 두 줄 안에 **번호만 있는 줄**이 있다.
+ *     주소판은 도로명과 번호가 따로 줄을 잡는다.
+ *   - 한 줄 꼴: 한 줄이 **도로명과 번호만**(「○○로 108」)이고 그 번호가 **색인에 실제로 있는** 건물번호다.
+ *     번호까지 맞아야 받는다. 간판·안내판의 「○○로 58」 도 이 꼴이라, 번호가 색인에 없으면 안 받는다.
+ *     안내문 한 줄 속에 섞인 주소(「CCTV 작동중 ○○로 58」)는 줄이 주소만이 아니라 안 걸린다.
+ *   - 비슷한 이름으로 고쳐 잡지 않는다. 찾은 주소가 둘 이상 서로 다르면 고르지 않는다.
+ * 찾은 것은 `readAddress` 로 다시 넘겨 번호가 그 도로에 있는지까지 본다.
+ */
+export function readAddressInText(text: string | null | undefined, index: RoadIndex | null): AddressReading | null {
+  if (!text || !index) return null;
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const known = (road: string) => Object.prototype.hasOwnProperty.call(index.buildings, road);
+  const found = new Set<string>();
+  for (let i = 0; i < lines.length; i++) {
+    const road = lines[i].replace(/\s+/g, "");
+    if (/(?:로|길)$/.test(road) && known(road)) {
+      for (let k = Math.max(0, i - 2); k <= Math.min(lines.length - 1, i + 2); k++) {
+        if (k === i || !/^\d+(?:-\d+)?$/.test(lines[k])) continue;
+        found.add(`${road} ${lines[k]}`);
+        break;
+      }
+      continue;
+    }
+    const oneLine = /^(.+?(?:로|길))\s*(\d+(?:-\d+)?)$/.exec(lines[i]);
+    if (!oneLine) continue;
+    const lineRoad = oneLine[1].replace(/\s+/g, "");
+    if (known(lineRoad) && index.buildings[lineRoad].includes(oneLine[2])) found.add(`${lineRoad} ${oneLine[2]}`);
+  }
+  if (found.size !== 1) return null;
+  return readAddress([...found][0], index);
 }
 
 /** 그 동에서 자주 나오는 도로명. 사진을 읽힐 때 참고 목록으로 넘긴다. */

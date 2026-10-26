@@ -1,13 +1,13 @@
 "use client";
 
-import { explainExifTime } from "@/core/exif-time";
+import { checkedGps, explainExifTime, readExifGps, type ExifGps } from "@/core/exif-time";
 
 /**
  * 사진 준비는 **브라우저에서** 끝낸다.
  *
  * 원본은 서버로 가지 않는다. 긴 변을 줄인 사본만 간다. 그래야 싸고 빠르고,
- * 남는 것도 적다. 찍힌 시각도 여기서 읽는다(EXIF). 좌표는 읽지 않는다.
- * 모델로 가는 사본은 그림판에서 다시 만든 것이라 기록(EXIF)이 통째로 없다.
+ * 남는 것도 적다. 찍힌 시각과 찍힌 자리(GPS)도 여기서 읽는다(EXIF). 자리는 주소를 채우는 데만
+ * 쓰고 이 브라우저를 떠나지 않는다. 모델로 가는 사본은 그림판에서 다시 만든 것이라 기록이 없다.
  */
 
 export interface PreparedPhoto {
@@ -16,8 +16,13 @@ export interface PreparedPhoto {
   /** 화면에 띄울 주소(브라우저 안에서만 산다). */
   url: string;
   /**
+   * 줄인 사본 그 자체. `url` 이 가리키는 것과 같다. 모델로 보낼 base64 는 이것으로 만든다.
+   */
+  blob: Blob;
+  /**
    * 서버로 보낼 base64. `data:` 접두 없음.
-   * **수동 모드에서는 빈 문자열이다**. 사진을 아무 데도 안 보내니 만들 까닭이 없다.
+   * 사진을 열 때는 **빈 문자열**이다. 모델로 보내기로 정해진 뒤에야 만든다(`toBase64`).
+   * **수동 모드에서는 끝까지 빈 문자열이다**. 사진을 아무 데도 안 보내니 만들 까닭이 없다.
    */
   data: string;
   mediaType: "image/jpeg";
@@ -25,6 +30,8 @@ export interface PreparedPhoto {
   date: string;
   /** 찍힌 시각 HH:MM. 못 읽으면 빈 문자열. */
   time: string;
+  /** 찍힌 자리(위도·경도). 없으면 null. 주소를 채우는 데만 쓴다. */
+  gps: ExifGps | null;
 /**
    * 찍힌 시각(ms). **모르면 0.**
    *
@@ -84,25 +91,37 @@ export function isImageFile(file: File): boolean {
 /** 파일 고르기 창에 넘기는 값. `image/*` 만으로는 HEIC 가 안 보이는 기계가 있다. */
 export const IMAGE_ACCEPT = "image/*,.heic,.heif";
 
+/** 동시에 펼치는 사진 수. */
+const OPEN_AT_ONCE = 3;
+
 export async function preparePhotos(
   files: File[],
   maxEdge: number,
   startIndex: number,
-  /**
-   * 서버로 보낼 base64 를 만들지. 수동 모드에서는 false. 사진이 브라우저 밖으로 안 나간다.
-   * 30장이면 문자열 수 MB 를 만들었다 버리는 셈이라, 안 만들면 그만큼 빠르고 가볍다.
-   */
-  needData = true,
+  onProgress?: (done: number, total: number) => void,
 ): Promise<Prepared> {
-  const settled = await Promise.all(
-    files.map(async (file) => {
+  /**
+   * **한꺼번에 열지 않는다.** 폰 사진 한 장은 펼치면 수십 MB 다. 서른 장을 동시에 펼치면 폰이
+   * 몇 초씩 굳고, 앱 안의 웹 화면은 메모리에 쫓겨 다시 뜨기도 한다. 몇 장씩만 열고 닫는다.
+   */
+  type Settled = { ok: true; photo: Omit<PreparedPhoto, "index"> } | { ok: false; failed: FailedPhoto };
+  const settled: Settled[] = new Array(files.length);
+  let next = 0;
+  let done = 0;
+  const worker = async () => {
+    while (next < files.length) {
+      const at = next++;
+      const file = files[at];
       try {
-        return { ok: true as const, photo: await prepareOne(file, maxEdge, needData) };
+        settled[at] = { ok: true, photo: await prepareOne(file, maxEdge) };
       } catch (cause) {
-        return { ok: false as const, failed: { name: file.name, why: whyFailed(cause) } };
+        settled[at] = { ok: false, failed: { name: file.name, why: whyFailed(cause) } };
       }
-    }),
-  );
+      done += 1;
+      onProgress?.(done, files.length);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(OPEN_AT_ONCE, files.length) }, worker));
 
   const prepared = settled.flatMap((one) => (one.ok ? [one.photo] : []));
   const failed = settled.flatMap((one) => (one.ok ? [] : [one.failed]));
@@ -128,7 +147,6 @@ export async function preparePhotos(
 async function prepareOne(
   file: File,
   maxEdge: number,
-  needData: boolean,
 ): Promise<Omit<PreparedPhoto, "index">> {
   let shot = await readShotTime(file);
   const bitmap = await toBitmap(file);
@@ -155,10 +173,12 @@ async function prepareOne(
   return {
     name: file.name,
     url: URL.createObjectURL(blob),
-    data: needData ? await toBase64(blob) : "",
+    blob,
+    data: "",
     mediaType: "image/jpeg",
     date: shot.date,
     time: shot.time,
+    gps: shot.gps,
     sortKey: shot.stamp,
     timeFrom: shot.stamp > 0 ? "exif" : null,
     probe: shot.stamp > 0 ? null : await probeOf(file, shot.why),
@@ -210,7 +230,8 @@ function whyFailed(cause: unknown): string {
   return raw;
 }
 
-async function toBase64(blob: Blob): Promise<string> {
+/** 서버로 보낼 꼴. `data:` 접두 없는 base64. */
+export async function toBase64(blob: Blob): Promise<string> {
   const buffer = new Uint8Array(await blob.arrayBuffer());
   let binary = "";
   // 한 번에 넘기면 인자 수 한도에 걸린다.
@@ -265,16 +286,22 @@ async function hasExifMark(file: File): Promise<boolean> {
  * exifr 가 멀쩡한 기록을 30장 전부 못 읽은 일이 있어서다. 그 길로 못 읽은 것(HEIC 등)만
  * exifr 로 한 번 더 본다. **HEIC 도 exifr 로 그대로 읽힌다**. 실물로 확인했다.
  * 메신저를 거친 사진은 EXIF 가 벗겨져 못 읽는다. 그때는 빈칸으로 둔다.
+ *
+ * 찍힌 자리도 같은 두 길이다. 아이폰 원본(HEIC)을 PC 로 옮겨 올리면 기록은 멀쩡한데 앞머리 읽기는
+ * JPEG 만 읽어서 자리가 비었다(같은 사진을 폰에서 올리면 폰이 JPEG 로 바꿔 줘서 읽혔다).
+ * 그래서 앞머리에서 자리를 못 얻은 장은 시각을 묻는 김에 자리도 exifr 에 묻는다.
  */
 async function readShotTime(
   file: File,
-): Promise<{ date: string; time: string; stamp: number; why: string }> {
+): Promise<{ date: string; time: string; stamp: number; why: string; gps: ExifGps | null }> {
   // 못 읽으면 까닭을 들고 돌아온다. 폰마다 다르게 비는 일이 있어 사람이 전해 줄 말이 필요하다.
   let why = "";
+  let gps: ExifGps | null = null;
   try {
     const head = new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer());
+    gps = readExifGps(head);
     const direct = explainExifTime(head);
-    if (direct.time) return { ...direct.time, why: "" };
+    if (direct.time) return { ...direct.time, why: "", gps };
     why = `${direct.why} (${Math.round(head.length / 1024)}KB)`;
   } catch (cause) {
     // 앞머리를 못 읽어도 아래 길이 남아 있다.
@@ -282,19 +309,30 @@ async function readShotTime(
   }
   try {
     const exifr = (await import("exifr")).default;
+    if (!gps) gps = await gpsByExifr(exifr, file);
     const tags = (await exifr.parse(file, ["DateTimeOriginal", "CreateDate"])) as
       | { DateTimeOriginal?: Date; CreateDate?: Date }
       | undefined;
     const shot = tags?.DateTimeOriginal ?? tags?.CreateDate;
     if (shot instanceof Date && !Number.isNaN(shot.getTime())) {
-      return { date: isoDate(shot), time: hhmm(shot), stamp: shot.getTime(), why: "" };
+      return { date: isoDate(shot), time: hhmm(shot), stamp: shot.getTime(), why: "", gps };
     }
     why += " · exifr 도 못 읽음";
   } catch (cause) {
     // EXIF 가 없거나 못 읽는 사진도 있다. 그래도 도구는 돌아야 한다.
     why += ` · exifr 오류 ${cause instanceof Error ? cause.name : String(cause)}`;
   }
-  return { date: "", time: "", stamp: 0, why };
+  return { date: "", time: "", stamp: 0, why, gps };
+}
+
+/** exifr 가 읽은 자리. 없거나 빈 값(0,0)이면 null. 자리를 못 읽어도 시각 읽기는 이어져야 하니 여기서 삼킨다. */
+async function gpsByExifr(exifr: typeof import("exifr").default, file: File): Promise<ExifGps | null> {
+  try {
+    const at = (await exifr.gps(file)) as { latitude?: number; longitude?: number } | undefined;
+    return typeof at?.latitude === "number" && typeof at?.longitude === "number" ? checkedGps(at.latitude, at.longitude) : null;
+  } catch {
+    return null;
+  }
 }
 
 function isoDate(value: Date): string {

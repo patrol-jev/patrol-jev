@@ -97,18 +97,69 @@ export function summarise(runs: UsageRecord[]): {
   photos: number;
   medianSeconds: number;
   baselineMinutes: number | null;
+  /** 아래 넷은 「모델이 한 것 · 코드가 한 것 · 사람이 한 것」을 가르는 숫자다. 회차가 쌓이며 호출과 고침이 내려가고 기억이 오르면 사람의 판단이 규칙으로 남고 있는 것이다. */
+  modelCalls: number;
+  learnedLanes: number;
+  unknownLanes: number;
+  edits: number;
 } {
   const seconds = runs
     .map((run) => (run.visionMs + run.firstPassMs) / 1000)
     .sort((a, b) => a - b);
   const middle = seconds.length > 0 ? seconds[Math.floor(seconds.length / 2)] : 0;
+  const total = (pick: (run: UsageRecord) => number | undefined) => runs.reduce((sum, run) => sum + (pick(run) || 0), 0);
 
   return {
     runs: runs.length,
-    photos: runs.reduce((sum, run) => sum + run.photos, 0),
+    photos: total((run) => run.photos),
     medianSeconds: Math.round(middle * 10) / 10,
     baselineMinutes: readBaseline(),
+    modelCalls: total((run) => run.visionCalls) + total((run) => run.firstPassCalls),
+    learnedLanes: total((run) => run.learnedLanes),
+    unknownLanes: total((run) => run.unknownLanes),
+    edits: total((run) => run.manualEdits),
   };
+}
+
+/** 회차의 날짜(이 기기의 시간대 · YYYY-MM-DD). `at` 은 UTC 로 적혀 있어 그대로 자르면 밤 회차가 전날로 간다. */
+export function runDay(at: string): string {
+  const t = new Date(at);
+  if (Number.isNaN(t.getTime())) return at.slice(0, 10);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+}
+
+/** 그 기간(포함)에 돌린 회차만. 결과 보고서 카드가 「이 기간에 도구가 한 일」을 적을 때 쓴다. */
+export function runsBetween(runs: UsageRecord[], from: string, to: string): UsageRecord[] {
+  return runs.filter((run) => {
+    const day = runDay(run.at);
+    return day >= from && day <= to;
+  });
+}
+
+/**
+ * 회차마다 한 줄인 CSV. 「사용 기록」에서 복사해 측정표에 붙인다.
+ * 사진도 주소도 글자도 없다. 숫자와 시각뿐이다. 그 칸이 생기기 전 기록은 빈 칸으로 둔다.
+ */
+export function runsCsv(runs: UsageRecord[]): string {
+  const head = ["시각", "방식", "사진", "자리", "걸린 초", "모델에 물음", "지난번 고친 대로", "주소 대조 맞음", "모르겠음", "고친 횟수", "복사"];
+  const cell = (value: number | undefined) => (value === undefined ? "" : String(value));
+  const lines = runs.map((run) =>
+    [
+      run.at,
+      run.mode === "manual" ? "수동" : "모델",
+      run.photos,
+      run.groups,
+      Math.round((run.visionMs + run.firstPassMs) / 100) / 10,
+      (run.visionCalls || 0) + (run.firstPassCalls || 0),
+      cell(run.learnedLanes),
+      cell(run.roadMatched),
+      run.unknownLanes,
+      run.manualEdits,
+      run.copied ? "예" : "아니요",
+    ].join(","),
+  );
+  return [head.join(","), ...lines].join("\n");
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

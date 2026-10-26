@@ -1,5 +1,7 @@
 "use client";
 
+import { carryShotProof } from "@/core/shot-proof";
+
 /**
  * 일지 사진 칸에 넣을 JPEG 를 **브라우저에서** 만든다.
  *
@@ -36,6 +38,7 @@ export async function cellPhotoBytes(url: string | undefined, ratio: number, wid
 /**
  * 이미 잘라 둔 JPEG 를 다른 비율로 다시 자른다. 보관한 사진 사본은 기본 양식 비율인데 부서 양식 칸은 비율이
  * 다를 수 있어서다. 비율 차이가 3% 안이면 그대로 돌려준다(다시 압축해 흐려질 이유가 없다).
+ * 사본에 적혀 있던 찍힌 날짜는 새 사본에 옮겨 적는다. 캔버스로 다시 그리면 그 칸이 사라지기 때문이다.
  */
 export async function recropJpeg(bytes: Uint8Array, ratio: number): Promise<Uint8Array> {
   try {
@@ -55,15 +58,39 @@ export async function recropJpeg(bytes: Uint8Array, ratio: number): Promise<Uint
     context.drawImage(bitmap, (width - bitmap.width) / 2, (height - bitmap.height) / 2);
     bitmap.close();
     const jpeg = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.8));
-    return jpeg ? new Uint8Array(await jpeg.arrayBuffer()) : bytes;
+    return jpeg ? carryShotProof(bytes, new Uint8Array(await jpeg.arrayBuffer())) : bytes;
   } catch {
     return bytes;
   }
 }
 
-/** 바이트를 파일로 내려받게 한다. */
-export function downloadBytes(bytes: Uint8Array, name: string): void {
-  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/hwp+zip" }));
+/**
+ * 긴 변을 줄인 JPEG. 회차 꾸러미에 넣는 사진용.
+ * 모델 길에서는 이미 만든 base64 사본이 있지만, 직접 적기 길에서는 사진이 아무 데도 안 가서 사본이 없다.
+ */
+export async function smallJpeg(url: string | undefined, maxEdge: number): Promise<Uint8Array | null> {
+  if (!url) return null;
+  try {
+    const blob = await (await fetch(url)).blob();
+    const bitmap = await createImageBitmap(blob);
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const jpeg = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.8));
+    return jpeg ? new Uint8Array(await jpeg.arrayBuffer()) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 바이트를 파일로 내려받게 한다. 종류를 안 주면 한글 파일이다. */
+export function downloadBytes(bytes: Uint8Array, name: string, type = "application/hwp+zip"): void {
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type }));
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = name;

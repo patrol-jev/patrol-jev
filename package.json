@@ -15,22 +15,28 @@
     "check:roads": "node --experimental-strip-types scripts/check-roads.mjs",
     "check:manual": "node --experimental-strip-types --import ./scripts/ts-hooks.mjs scripts/check-manual.mjs",
     "check:hwpx": "node --experimental-strip-types --import ./scripts/ts-hooks.mjs scripts/check-hwpx.mjs",
-    "check:period": "node --experimental-strip-types --import ./scripts/ts-hooks.mjs scripts/check-period.mjs"
+    "check:form": "node --experimental-strip-types --import ./scripts/ts-hooks.mjs scripts/check-form-map.mjs",
+    "check:period": "node --experimental-strip-types --import ./scripts/ts-hooks.mjs scripts/check-period.mjs",
+    "check:overtime": "node --experimental-strip-types --import ./scripts/ts-hooks.mjs scripts/check-overtime.mjs",
+    "check:eyes": "node --experimental-strip-types --import ./scripts/ts-hooks.mjs scripts/check-eyes.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
     "@typesafe-ai/sdk": "^0.6.0",
     "exifr": "^7.1.3",
     "fflate": "^0.8.3",
     "heic-to": "^1.5.2",
     "next": "16.3.5",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "three": "^0.180.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/three": "^0.180.0",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
     "tailwindcss": "^4",

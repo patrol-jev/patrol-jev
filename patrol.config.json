@@ -12,7 +12,8 @@
     "addressPlate": 0.7,
     "sameMinutes": 2,
     "splitMinutes": 5,
-    "workShot": 0.8
+    "workShot": 0.8,
+    "gpsMeters": 40
   },
   "vision": {
     "model": "gpt-5.6-luna",
@@ -20,7 +21,9 @@
     "maxTokens": 4096,
     "maxEdge": 1024,
     "concurrency": 6,
-    "reasoningEffort": "none"
+    "reasoningEffort": "none",
+    "first": "claude",
+    "claude": { "model": "claude-opus-5-5", "effort": "low" }
   },
   "firstPass": {
     "enabled": true,
@@ -32,5 +35,10 @@
   },
   "log": {
     "mode": "local"
+  },
+  "meal": {
+    "nearMeters": 50,
+    "gapMeters": 25,
+    "unitPrice": 9000
   }
 }

@@ -8,9 +8,19 @@
  * 이 파일은 서버에서만 돈다. 키·주소·사진은 여기 오지 않는다.
  */
 
-export type Who = "vision" | "jev";
+export type Who = "vision" | "visionClaude" | "jev" | "risk";
 
-const NAME: Record<Who, string> = { vision: "사진 읽기(OpenAI)", jev: "판정(Jev)" };
+const NAME: Record<Who, string> = { vision: "사진 읽기(OpenAI)", visionClaude: "사진 읽기(Claude)", jev: "판정(Jev)", risk: "위험 읽기(Claude)" };
+
+/**
+ * 키나 잔액의 문제인가. 이 눈으로는 더 못 읽는다는 뜻이라, 다른 눈이 있으면 그쪽으로 넘긴다(`eyes.ts`).
+ * 분당 한도(429)와 서버 장애는 아니다. 그건 잠시 뒤에 같은 눈으로 다시 되는 일이다.
+ * Claude 는 크레딧이 다 되면 400 으로 「credit balance is too low」 를 보낸다. 상태만으로는 못 가려 본문도 본다.
+ */
+export function keyOrCreditProblem(status: number, body = ""): boolean {
+  if (status === 401 || status === 402 || status === 403) return true;
+  return /credit balance|insufficient_quota|exceeded your current quota|billing/i.test(body);
+}
 
 /** 노드 fetch(undici) 가 연결 실패에 붙이는 원인 코드. */
 const NETWORK_CODES: Record<string, string> = {
@@ -30,12 +40,12 @@ export function explainStatus(who: Who, status: number, body = ""): string {
   const name = NAME[who];
   const text = body.toLowerCase();
   if (status === 401) return `${name} 키가 틀렸거나 만료됐습니다. 서버의 키 설정을 확인해 주세요.`;
-  if (status === 402) return `${name} 잔액(크레딧)이 다 됐습니다. 충전한 뒤 다시 해 주세요.`;
+  if (status === 402) return `${name} 잔액(크레딧)이 다 됐습니다. 충전한 뒤에야 다시 됩니다. 본인 서버가 아니면 운영자에게 알려 주세요.`;
   if (status === 403) return `${name} 키에 이 모델을 쓸 권한이 없습니다. 키 설정을 확인해 주세요.`;
   if (status === 404) return `${name} 모델 이름을 서버가 모릅니다. 설정(patrol.config.json)의 모델 이름을 확인해 주세요.`;
   if (status === 429) {
     if (/insufficient_quota|billing|credit|balance|exceeded your current quota/.test(text)) {
-      return `${name} 잔액(크레딧)이 다 됐습니다. 충전한 뒤 다시 해 주세요.`;
+      return `${name} 잔액(크레딧)이 다 됐습니다. 충전한 뒤에야 다시 됩니다. 본인 서버가 아니면 운영자에게 알려 주세요.`;
     }
     return `${name} 요청이 몰려 잠시 막혔습니다(분당 한도). 1분쯤 뒤에 다시 해 주세요.`;
   }
